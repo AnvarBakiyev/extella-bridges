@@ -11,7 +11,7 @@
       "env_http_headers": {
         "X-Auth-Token": "EXTELLA_API_TOKEN"
       },
-      "required": true,
+      "required": false,
       "default_tools_approval_mode": "writes",
       "disabled_tools": [
         "create_agent",
