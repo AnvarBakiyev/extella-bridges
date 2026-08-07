@@ -1,0 +1,102 @@
+#!/usr/bin/env node
+
+const args = process.argv.slice(2);
+
+if (args[0] === "login" && args[1] === "status") {
+  console.log("Logged in using ChatGPT");
+  process.exit(0);
+}
+
+if (args[0] === "features" && args[1] === "list") {
+  console.log("multi_agent false");
+  process.exit(0);
+}
+
+if (args[0] !== "exec") {
+  console.error("Unsupported fake Codex command");
+  process.exit(64);
+}
+
+let prompt = "";
+for await (const chunk of process.stdin) {
+  prompt += chunk.toString("utf8");
+}
+
+const eventId =
+  prompt.match(/^Event ID: ([A-Za-z0-9._:-]{8,128})$/m)?.[1] ||
+  "evt_fake_missing";
+const mode = process.env.FAKE_CODEX_MODE || "success";
+
+function event(value) {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+if (mode === "nonzero") {
+  const providerError = JSON.stringify({
+    type: "error",
+    error: {
+      type: "invalid_request_error",
+      code: "invalid_json_schema",
+      message:
+        "unsafe credential detail user@example.com /Users/private/file",
+    },
+    status: 400,
+  });
+  event({ type: "thread.started", thread_id: "fake-thread" });
+  event({ type: "error", message: providerError });
+  event({ type: "turn.failed", error: { message: providerError } });
+  console.error(
+    "fake failure with credential detail user@example.com /Users/private/file",
+  );
+  process.exit(42);
+}
+
+if (mode === "malformed_jsonl") {
+  process.stdout.write("this is not json\n");
+  process.exit(0);
+}
+
+if (mode === "missing_final") {
+  event({ type: "thread.started", thread_id: "fake-thread" });
+  event({
+    type: "turn.completed",
+    usage: { input_tokens: 10, output_tokens: 0 },
+  });
+  process.exit(0);
+}
+
+if (mode === "invalid_final_json") {
+  event({
+    type: "item.completed",
+    item: { type: "agent_message", text: "not-json" },
+  });
+  process.exit(0);
+}
+
+const providerResult = {
+  schema_version: "1.0",
+  provider: "codex",
+  event_id: eventId,
+  status: "completed",
+  answer: "{\"ok\":true}",
+};
+
+if (mode === "schema_invalid") {
+  providerResult.answer = { unsafe: true };
+  providerResult.unexpected = "field";
+}
+
+event({
+  type: "item.completed",
+  item: {
+    type: "agent_message",
+    text: JSON.stringify(providerResult),
+  },
+});
+event({
+  type: "turn.completed",
+  usage: {
+    input_tokens: 10,
+    output_tokens: mode === "budget_exceeded" ? 65 : 5,
+  },
+});

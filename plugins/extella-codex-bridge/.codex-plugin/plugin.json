@@ -1,0 +1,37 @@
+{
+  "name": "extella-codex-bridge",
+  "version": "0.1.0",
+  "description": "Connect Codex and Extella in both directions through Extella MCP and a signed local account-wide bridge.",
+  "author": {
+    "name": "Extella"
+  },
+  "homepage": "https://extella.ai/",
+  "repository": "https://github.com/AnvarBakiyev/extella-codex-bridge",
+  "keywords": [
+    "extella",
+    "codex",
+    "mcp",
+    "bridge",
+    "agents"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Extella ↔ Codex Bridge",
+    "shortDescription": "Connect every Extella agent to local Codex",
+    "longDescription": "Adds Extella MCP access in Codex and a signed, loopback-only account bridge that lets every current and future Extella agent call local Codex after explicit setup.",
+    "developerName": "Extella",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://extella.ai/",
+    "defaultPrompt": [
+      "Подключи Codex к текущему аккаунту Extella.",
+      "Проверь состояние моста Extella → Codex без запуска модели.",
+      "Покажи, какие агенты Extella могут вызывать Codex."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

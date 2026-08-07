@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "extella_primary": {
+      "url": "https://api.extella.ai/mcp/",
+      "auth": "oauth",
+      "bearer_token_env_var": "EXTELLA_API_TOKEN",
+      "http_headers": {
+        "X-Profile-Id": "default",
+        "X-Agent-Id": "agent_extella_default"
+      },
+      "env_http_headers": {
+        "X-Auth-Token": "EXTELLA_API_TOKEN"
+      },
+      "required": true,
+      "default_tools_approval_mode": "writes",
+      "disabled_tools": [
+        "create_agent",
+        "delete_agent",
+        "delete_concept",
+        "delete_expert",
+        "delete_rule"
+      ]
+    },
+    "extella_secondary": {
+      "url": "https://api.extella.ai/mcp/",
+      "auth": "oauth",
+      "bearer_token_env_var": "EXTELLA_SECONDARY_API_TOKEN",
+      "http_headers": {
+        "X-Profile-Id": "default",
+        "X-Agent-Id": "agent_extella_default"
+      },
+      "env_http_headers": {
+        "X-Auth-Token": "EXTELLA_SECONDARY_API_TOKEN"
+      },
+      "required": false,
+      "default_tools_approval_mode": "writes",
+      "disabled_tools": [
+        "create_agent",
+        "delete_agent",
+        "delete_concept",
+        "delete_expert",
+        "delete_rule"
+      ]
+    }
+  }
+}

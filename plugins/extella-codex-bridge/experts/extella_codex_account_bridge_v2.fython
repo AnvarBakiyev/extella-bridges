@@ -1,0 +1,141 @@
+$extens("include.py")
+include("import os", [])
+include("import json", [])
+include("import time", [])
+include("import uuid", [])
+include("import hmac", [])
+include("import hashlib", [])
+include("import subprocess", [])
+include("import urllib.request", [])
+include("import urllib.error", [])
+
+def extella_codex_account_bridge_v2(
+    prompt: str = "",
+    max_output_tokens: int = 2000,
+    timeout_ms: int = 120000
+) -> dict:
+    import os, json, time, uuid, hmac, hashlib, subprocess, urllib.request, urllib.error
+
+    def local_environment(name, default=""):
+        value = os.environ.get(name, "")
+        if value:
+            return value
+        try:
+            completed = subprocess.run(
+                ["/bin/launchctl", "getenv", name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+                shell=False
+            )
+            if completed.returncode == 0 and completed.stdout.strip():
+                return completed.stdout.strip()
+        except Exception:
+            pass
+        return default
+
+    secret = local_environment("EXTELLA_BRIDGE_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        return {"status": "error", "message": "Local Codex bridge is not configured"}
+    token = local_environment("EXTELLA_API_TOKEN")
+    if len(token) < 8:
+        return {"status": "error", "message": "Current Extella account is unavailable"}
+    if not prompt or len(prompt) > 4000:
+        return {"status": "error", "message": "prompt must contain 1..4000 characters"}
+    if max_output_tokens < 1 or max_output_tokens > 2000:
+        return {"status": "error", "message": "max_output_tokens must be 1..2000"}
+    if timeout_ms < 1000 or timeout_ms > 120000:
+        return {"status": "error", "message": "timeout_ms must be 1000..120000"}
+    try:
+        port = int(local_environment("EXTELLA_BRIDGE_PORT", "8787"))
+    except Exception:
+        return {"status": "error", "message": "Local Codex bridge port is invalid"}
+    if port < 1024 or port > 65535:
+        return {"status": "error", "message": "Local Codex bridge port is invalid"}
+
+    account_binding = hmac.new(
+        secret.encode("utf-8"),
+        ("extella-account-v1." + token).encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    token = ""
+    event_id = "evt_" + uuid.uuid4().hex
+    body = {
+        "schema_version": "1.1",
+        "event_id": event_id,
+        "account_binding": account_binding,
+        "capability": "general-assistance",
+        "provider": "codex",
+        "prompt": prompt,
+        "budget": {
+            "max_output_tokens": max_output_tokens,
+            "timeout_ms": timeout_ms
+        }
+    }
+    raw = json.dumps(
+        body,
+        ensure_ascii=False,
+        separators=(",", ":")
+    ).encode("utf-8")
+    timestamp = str(int(time.time()))
+    nonce = uuid.uuid4().hex
+    signed = timestamp.encode("utf-8") + b"." + nonce.encode("utf-8") + b"." + raw
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        signed,
+        hashlib.sha256
+    ).hexdigest()
+    secret = ""
+    request = urllib.request.Request(
+        "http://127.0.0.1:" + str(port) + "/v1/delegate",
+        data=raw,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Extella-Timestamp": timestamp,
+            "X-Extella-Nonce": nonce,
+            "X-Extella-Signature": "sha256=" + digest
+        }
+    )
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=max(2, int(timeout_ms / 1000) + 5)
+        ) as response:
+            result = json.loads(response.read(65536).decode("utf-8"))
+            if result.get("status") != "completed":
+                return result
+            if result.get("event_id") != event_id:
+                return {"status": "error", "message": "Bridge event mismatch"}
+            return result
+    except urllib.error.HTTPError as error:
+        try:
+            failure = json.loads(error.read(65536).decode("utf-8"))
+            bridge_error = failure.get("error", {})
+            result = {
+                "status": "error",
+                "code": str(bridge_error.get("code", "bridge_http_error"))[:80],
+                "message": str(bridge_error.get("message", "Local Codex bridge rejected the request"))[:240]
+            }
+            if bridge_error.get("stage"):
+                result["stage"] = str(bridge_error.get("stage"))[:80]
+            if bridge_error.get("diagnostic_id"):
+                result["diagnostic_id"] = str(bridge_error.get("diagnostic_id"))[:128]
+            if isinstance(bridge_error.get("details"), dict):
+                result["details"] = bridge_error.get("details")
+            return result
+        except Exception:
+            return {"status": "error", "code": "bridge_http_error", "message": "Local Codex bridge rejected the request"}
+    except urllib.error.URLError:
+        return {
+            "status": "error",
+            "code": "bridge_unavailable",
+            "message": "Local Codex bridge is unavailable"
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "code": "bridge_request_failed",
+            "message": "Local Codex bridge request failed"
+        }

@@ -1,0 +1,20 @@
+{
+  "name": "extella-codex",
+  "interface": {
+    "displayName": "Extella Codex"
+  },
+  "plugins": [
+    {
+      "name": "extella-codex-bridge",
+      "source": {
+        "source": "local",
+        "path": "./plugins/extella-codex-bridge"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
