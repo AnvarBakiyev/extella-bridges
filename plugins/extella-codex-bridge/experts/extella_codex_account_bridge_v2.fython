@@ -17,10 +17,7 @@ def extella_codex_account_bridge_v2(
 ) -> dict:
     import os, json, time, uuid, hmac, hashlib, subprocess, urllib.request, urllib.error
 
-    def local_environment(name, default=""):
-        value = os.environ.get(name, "")
-        if value:
-            return value
+    def launch_environment(name):
         try:
             completed = subprocess.run(
                 ["/bin/launchctl", "getenv", name],
@@ -34,9 +31,24 @@ def extella_codex_account_bridge_v2(
                 return completed.stdout.strip()
         except Exception:
             pass
+        return ""
+
+    def local_environment(name, default=""):
+        value = os.environ.get(name, "")
+        if value:
+            return value
+        value = launch_environment(name)
+        if value:
+            return value
         return default
 
-    secret = local_environment("EXTELLA_BRIDGE_SECRET")
+    # Bridge transport settings belong to the current launchd service.  An
+    # already-running Extella worker may still carry values inherited before
+    # the bridge was installed or updated, so process environment must not
+    # override the active service secret or port.
+    secret = launch_environment("EXTELLA_BRIDGE_SECRET") or os.environ.get(
+        "EXTELLA_BRIDGE_SECRET", ""
+    )
     if len(secret.encode("utf-8")) < 32:
         return {"status": "error", "message": "Local Codex bridge is not configured"}
     token = local_environment("EXTELLA_API_TOKEN")
@@ -56,7 +68,10 @@ def extella_codex_account_bridge_v2(
     if timeout_ms < 1000 or timeout_ms > 120000:
         return {"status": "error", "message": "timeout_ms must be 1000..120000"}
     try:
-        port = int(local_environment("EXTELLA_BRIDGE_PORT", "8787"))
+        port = int(
+            launch_environment("EXTELLA_BRIDGE_PORT") or
+            os.environ.get("EXTELLA_BRIDGE_PORT", "8787")
+        )
     except Exception:
         return {"status": "error", "message": "Local Codex bridge port is invalid"}
     if port < 1024 or port > 65535:
