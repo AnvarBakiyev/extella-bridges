@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 
 import { execFile, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -15,6 +22,10 @@ const execFileAsync = promisify(execFile);
 const DIAGNOSTIC_NAME = /^[a-z][a-z0-9_]{2,63}$/;
 const DIAGNOSTIC_HASH = /^[a-f0-9]{64}$/;
 const DIAGNOSTIC_EVENT_ID = /^[A-Za-z0-9._:-]{8,128}$/;
+const ACCOUNT_BINDING = /^[a-f0-9]{64}$/;
+const CONVERSATION_ID = /^ctx_[A-Za-z0-9_-]{32,64}$/;
+const CODEX_THREAD_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DIAGNOSTIC_STRING_FIELDS = new Set([
   "os_code",
   "provider_error_code",
@@ -38,6 +49,8 @@ const DIAGNOSTIC_INTEGER_FIELDS = new Set([
 ]);
 const CODEX_CONFIG_OVERRIDES = [
   'approval_policy="never"',
+  'history.persistence="save-all"',
+  'sandbox_mode="read-only"',
   "features.apps=false",
   "features.hooks=false",
   "features.multi_agent=false",
@@ -254,6 +267,12 @@ function parseArgs(argv) {
     } else if (value === "--state-dir" && next) {
       options.stateDir = next;
       index += 1;
+    } else if (value === "--account-binding" && next) {
+      options.accountBinding = next;
+      index += 1;
+    } else if (value === "--conversation-id" && next) {
+      options.conversationId = next;
+      index += 1;
     } else if (value === "--max-output-tokens" && next) {
       options.maxOutputTokens = Number.parseInt(next, 10);
       index += 1;
@@ -436,7 +455,13 @@ function parseCodexOutput(stdout, expectedEventId = null) {
     );
   }
   const usage = events.find((event) => event.type === "turn.completed")?.usage;
-  return { response, usage: usage || null };
+  const threadId = events.find(
+    (event) =>
+      event.type === "thread.started" &&
+      typeof event.thread_id === "string" &&
+      CODEX_THREAD_ID.test(event.thread_id),
+  )?.thread_id;
+  return { response, threadId: threadId || null, usage: usage || null };
 }
 
 function codexConfigurationArguments() {
@@ -447,7 +472,6 @@ function codexArguments(workspace) {
   return [
     "exec",
     "--skip-git-repo-check",
-    "--ephemeral",
     "--sandbox",
     "read-only",
     "--ignore-user-config",
@@ -462,6 +486,107 @@ function codexArguments(workspace) {
     workspace,
     "-",
   ];
+}
+
+function codexResumeArguments(threadId) {
+  if (!CODEX_THREAD_ID.test(threadId || "")) {
+    throw new Error("A valid Codex thread ID is required");
+  }
+  return [
+    "exec",
+    "resume",
+    "--skip-git-repo-check",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--json",
+    "--output-schema",
+    RESULT_SCHEMA,
+    ...codexConfigurationArguments(),
+    threadId,
+    "-",
+  ];
+}
+
+function newConversationId() {
+  return `ctx_${randomBytes(24).toString("base64url")}`;
+}
+
+function conversationPath({ accountBinding, conversationId, stateDir }) {
+  if (!ACCOUNT_BINDING.test(accountBinding || "")) {
+    throw new Error("A valid Extella account binding is required");
+  }
+  if (!CONVERSATION_ID.test(conversationId || "")) {
+    throw new Error("A valid conversation ID is required");
+  }
+  const accountDirectory = sha256Text(`extella-context-v1.${accountBinding}`);
+  return join(resolve(stateDir), "conversations", accountDirectory, `${conversationId}.json`);
+}
+
+async function loadConversation(options) {
+  const path = conversationPath(options);
+  let raw;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw providerFailure(
+        "codex_conversation_not_found",
+        "codex_context_load",
+      );
+    }
+    throw providerFailure("codex_context_load_failed", "codex_context_load", {
+      os_code: error?.code,
+    });
+  }
+  const record = parseJsonObject(raw);
+  if (
+    record?.schema_version !== "1.0" ||
+    record.conversation_id !== options.conversationId ||
+    !CODEX_THREAD_ID.test(record.codex_thread_id || "")
+  ) {
+    throw providerFailure(
+      "codex_context_record_invalid",
+      "codex_context_load",
+    );
+  }
+  return record.codex_thread_id;
+}
+
+async function storeConversation({
+  accountBinding,
+  conversationId,
+  stateDir,
+  threadId,
+}) {
+  if (!CODEX_THREAD_ID.test(threadId || "")) {
+    throw providerFailure(
+      "codex_thread_id_missing",
+      "codex_context_store",
+    );
+  }
+  const path = conversationPath({ accountBinding, conversationId, stateDir });
+  const directory = dirname(path);
+  const temporary = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+    await writeFile(
+      temporary,
+      `${JSON.stringify({
+        schema_version: "1.0",
+        conversation_id: conversationId,
+        codex_thread_id: threadId,
+        created_at: new Date().toISOString(),
+      })}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    await rename(temporary, path);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw providerFailure("codex_context_store_failed", "codex_context_store", {
+      os_code: error?.code,
+    });
+  }
 }
 
 async function verifyCodexConfiguration() {
@@ -488,6 +613,7 @@ async function invokeCodex({
   eventId,
   maxOutputTokens,
   prompt,
+  threadId,
   timeoutMs,
   workspace,
 }) {
@@ -505,7 +631,9 @@ async function invokeCodex({
     "Return JSON matching the supplied schema.",
     `Set event_id to exactly: ${eventId}`,
   ].join("\n");
-  const args = codexArguments(workspace);
+  const args = threadId
+    ? codexResumeArguments(threadId)
+    : codexArguments(workspace);
   return await new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.env.CODEX_BIN || "codex", args, {
       cwd: workspace,
@@ -644,15 +772,36 @@ async function invokeProvider(options) {
   }
 
   const workspace = resolve(options.workspace || process.cwd());
+  const stateDir = resolve(options.stateDir || join(workspace, "state"));
+  const accountBinding = options.accountBinding;
+  if (!ACCOUNT_BINDING.test(accountBinding || "")) {
+    throw new Error("A valid Extella account binding is required");
+  }
+  const conversationId = options.conversationId || newConversationId();
+  if (!CONVERSATION_ID.test(conversationId)) {
+    throw new Error("conversation_id is invalid");
+  }
+  const existingThreadId = options.conversationId
+    ? await loadConversation({ accountBinding, conversationId, stateDir })
+    : null;
   await verifyChatGptAuth();
   await verifyCodexConfiguration();
   const result = await invokeCodex({
     eventId,
     maxOutputTokens,
     prompt,
+    threadId: existingThreadId,
     timeoutMs,
     workspace,
   });
+  if (!existingThreadId) {
+    await storeConversation({
+      accountBinding,
+      conversationId,
+      stateDir,
+      threadId: result.threadId,
+    });
+  }
   const actualOutputTokens = result.usage?.output_tokens;
   if (
     Number.isInteger(actualOutputTokens) &&
@@ -669,6 +818,7 @@ async function invokeProvider(options) {
   }
   return {
     ...result.response,
+    conversation_id: conversationId,
     usage: result.usage,
     cost_guard: {
       daily_call_limit: "disabled_by_owner",
@@ -710,10 +860,15 @@ export {
   childEnvironment,
   codexArguments,
   codexConfigurationArguments,
+  codexResumeArguments,
   codexEventDiagnostic,
+  conversationPath,
   invokeProvider,
+  loadConversation,
+  newConversationId,
   parseCodexOutput,
   safeProviderDiagnostic,
+  storeConversation,
   validateProviderResult,
   verifyChatGptAuth,
   verifyCodexConfiguration,

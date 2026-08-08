@@ -10,7 +10,7 @@ ETB.codexAccountBridge = (function () {
   // records by name, so reusing the legacy `extella_codex_bridge` can make a
   // local record shadow an account-global save in another agent scope.
   var NAME = 'extella_codex_account_bridge_v2';
-  var SHA256 = 'c2f080d91d325027ddd1eafa0513cafc7a0d42ad8264a9d103612563cd197a9f';
+  var SHA256 = '767d612611d6e0b9d2142f00ca2b44f15500cabb9575e12bc1ef98024e1cfed5';
   var CODE = [
     "$extens(\"include.py\")",
     "include(\"import os\", [])",
@@ -25,6 +25,7 @@ ETB.codexAccountBridge = (function () {
     "",
     "def extella_codex_account_bridge_v2(",
     "    prompt: str = \"\",",
+    "    conversation_id: str = \"\",",
     "    max_output_tokens: int = 2000,",
     "    timeout_ms: int = 120000",
     ") -> dict:",
@@ -57,6 +58,13 @@ ETB.codexAccountBridge = (function () {
     "        return {\"status\": \"error\", \"message\": \"Current Extella account is unavailable\"}",
     "    if not prompt or len(prompt) > 4000:",
     "        return {\"status\": \"error\", \"message\": \"prompt must contain 1..4000 characters\"}",
+    "    conversation_suffix = conversation_id[4:] if conversation_id.startswith(\"ctx_\") else \"\"",
+    "    if conversation_id and (",
+    "        len(conversation_suffix) < 32 or",
+    "        len(conversation_suffix) > 64 or",
+    "        any(not (character.isalnum() or character in \"_-\") for character in conversation_suffix)",
+    "    ):",
+    "        return {\"status\": \"error\", \"message\": \"conversation_id is invalid\"}",
     "    if max_output_tokens < 1 or max_output_tokens > 2000:",
     "        return {\"status\": \"error\", \"message\": \"max_output_tokens must be 1..2000\"}",
     "    if timeout_ms < 1000 or timeout_ms > 120000:",
@@ -76,7 +84,7 @@ ETB.codexAccountBridge = (function () {
     "    token = \"\"",
     "    event_id = \"evt_\" + uuid.uuid4().hex",
     "    body = {",
-    "        \"schema_version\": \"1.1\",",
+    "        \"schema_version\": \"1.2\",",
     "        \"event_id\": event_id,",
     "        \"account_binding\": account_binding,",
     "        \"capability\": \"general-assistance\",",
@@ -87,6 +95,8 @@ ETB.codexAccountBridge = (function () {
     "            \"timeout_ms\": timeout_ms",
     "        }",
     "    }",
+    "    if conversation_id:",
+    "        body[\"conversation_id\"] = conversation_id",
     "    raw = json.dumps(",
     "        body,",
     "        ensure_ascii=False,",
@@ -159,9 +169,10 @@ ETB.codexAccountBridge = (function () {
     name: NAME,
     sha256: SHA256,
     code: CODE,
-    description: 'Delegate a bounded text task to local Codex when the user asks to call, consult, or hand work to Codex.',
+    description: 'Delegate a bounded text task to local Codex and resume an isolated conversation for the current Extella chat.',
     kwargs: {
       prompt: '',
+      conversation_id: '',
       max_output_tokens: 2000,
       timeout_ms: 120000
     }

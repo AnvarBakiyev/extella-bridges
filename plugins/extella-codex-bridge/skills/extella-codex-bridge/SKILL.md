@@ -12,8 +12,10 @@ For Extella-to-Codex routing:
 1. Only call Codex when the user explicitly asks to call, consult, or delegate to Codex.
 2. If `extella_codex_account_bridge_v2` is directly available as a tool, call it with the user's request as `prompt`.
 3. Otherwise call `run_expert` directly with `name="extella_codex_account_bridge_v2"`, `global=true`, and the request in `params.prompt`.
-4. Never use `run_agent` and never start another Extella agent for this route.
-5. Do not call `get_expert` or `search_experts` before the direct invocation unless diagnosing a failed direct call.
+4. After the first successful call in an Extella chat, reuse the returned `conversation_id` in every later bridge call from that same chat. If the chat has no earlier `conversation_id`, omit it to create a new Codex thread.
+5. Never reuse a `conversation_id` across different Extella chats. Do not summarize, compact, or truncate the persisted Codex thread history in the bridge.
+6. Never use `run_agent` and never start another Extella agent for this route.
+7. Do not call `get_expert` or `search_experts` before the direct invocation unless diagnosing a failed direct call.
 
 Use `max_output_tokens=2000` for complex coding tasks and a smaller value for short answers. Use `timeout_ms` no higher than 120000.
 

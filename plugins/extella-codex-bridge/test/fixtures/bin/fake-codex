@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { appendFile } from "node:fs/promises";
+
 const args = process.argv.slice(2);
 
 if (args[0] === "login" && args[1] === "status") {
@@ -17,6 +19,14 @@ if (args[0] !== "exec") {
   process.exit(64);
 }
 
+if (process.env.FAKE_CODEX_ARGS_LOG) {
+  await appendFile(
+    process.env.FAKE_CODEX_ARGS_LOG,
+    `${JSON.stringify(args)}\n`,
+    "utf8",
+  );
+}
+
 let prompt = "";
 for await (const chunk of process.stdin) {
   prompt += chunk.toString("utf8");
@@ -26,6 +36,7 @@ const eventId =
   prompt.match(/^Event ID: ([A-Za-z0-9._:-]{8,128})$/m)?.[1] ||
   "evt_fake_missing";
 const mode = process.env.FAKE_CODEX_MODE || "success";
+const threadId = "77777777-7777-4777-8777-777777777777";
 
 function event(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -42,7 +53,7 @@ if (mode === "nonzero") {
     },
     status: 400,
   });
-  event({ type: "thread.started", thread_id: "fake-thread" });
+  event({ type: "thread.started", thread_id: threadId });
   event({ type: "error", message: providerError });
   event({ type: "turn.failed", error: { message: providerError } });
   console.error(
@@ -57,7 +68,7 @@ if (mode === "malformed_jsonl") {
 }
 
 if (mode === "missing_final") {
-  event({ type: "thread.started", thread_id: "fake-thread" });
+  event({ type: "thread.started", thread_id: threadId });
   event({
     type: "turn.completed",
     usage: { input_tokens: 10, output_tokens: 0 },
@@ -85,6 +96,8 @@ if (mode === "schema_invalid") {
   providerResult.answer = { unsafe: true };
   providerResult.unexpected = "field";
 }
+
+event({ type: "thread.started", thread_id: threadId });
 
 event({
   type: "item.completed",

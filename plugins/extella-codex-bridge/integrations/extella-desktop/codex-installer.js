@@ -6,27 +6,31 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = '094dfbe5ece37ba92d2be4bf86a7ee6e0adbc43cc3de405bae373e08cb7e212b';
+  var EXPERT_SHA256 = 'a40bf339e8afd81f8c895649da4f780debd3f290b68952cba081b474b4f117f8';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '445d111131ef27784d39fe5a665cd86f209a6624984beb6431f19c5af36abbc5';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
-  var INSTALL_EXPERT_SHA256 = '04ef8f657b938b29ae1042dc14cd1b64a936bd487fd8ff5bd96948fae7028746';
+  var INSTALL_EXPERT_SHA256 = '11f3998ca4cb16590a91d519d240872dd5b6c0901b698c353c32506a803c39fc';
   var CREDENTIALS_EXPERT_NAME = 'extella_codex_credentials_v1';
   var CREDENTIALS_EXPERT_SHA256 = 'cd3d10475328dd915aa6504642f366c7d891846fb9450c237bd3ffcbd49dc586';
   var BRIDGE_EXPERT_NAME = 'extella_codex_bridge_setup_v1';
-  var BRIDGE_EXPERT_SHA256 = '97572ade0f0601d1936a401b68291dd01f5cbae85ac952e038b48f1c8b3d3c29';
+  var BRIDGE_EXPERT_SHA256 = '52bdfab5b3c535f308b990d74992cee7e0ecc50ca3a4c24ebf985d727e4b59e2';
   var VERIFY_EXPERT_NAME = 'extella_codex_verify_v1';
-  var VERIFY_EXPERT_SHA256 = 'db7c7f00e3cd69a42880d3c3f499249131d87538e2614ee7d83344539ee9c025';
-  var PLUGIN_VERSION = '0.1.1';
-  var STANDARDS_REF = 'v0.1.1';
+  var VERIFY_EXPERT_SHA256 = 'f75503d66e0ab2a7f30706ee2d93a3599baaf69f7aecb6137bb96f02ffbf8f1a';
+  var PLUGIN_VERSION = '0.2.0';
+  var STANDARDS_REF = 'v0.2.0';
   var STATE_KEY = 'extella:codex-connection:v2';
-  var ROUTING_RULE_MARKER = 'EXTELLA_CODEX_ROUTING_V1';
+  var ROUTING_RULE_MARKER = 'EXTELLA_CODEX_ROUTING_V2';
   var ROUTING_RULE_TEXT = ROUTING_RULE_MARKER +
     ': When the user explicitly asks to call or consult Codex, never use run_agent ' +
     'and never start another Extella agent. If the extella_codex_account_bridge_v2 tool is ' +
     'directly available, call it with the user request as prompt. Otherwise call ' +
     'run_expert directly with name="extella_codex_account_bridge_v2", global=true, and ' +
-    'params containing the user request as prompt. Do not call get_expert or ' +
+    'params containing the user request as prompt. After a successful call, reuse its ' +
+    'conversation_id for every later Codex call in this same Extella chat. If this chat ' +
+    'has no previous conversation_id, omit it so the bridge creates a new Codex thread. ' +
+    'Never reuse a conversation_id from another chat and never summarize or truncate the ' +
+    'Codex thread history. Do not call get_expert or ' +
     'search_experts first. Do not call Codex unless the user explicitly asks.';
   // Setup is stored in the stock Qwen scope. Device choice belongs to Extella's
   // default-target resolver at run time, not to expert storage.
@@ -38,8 +42,8 @@ ETB.codexInstaller = (function () {
     'def _etb_codex_setup_v2(step="preflight") -> str:',
     '    import json, os, platform, secrets, shutil, subprocess, urllib.request',
     '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-codex-bridge.git"',
-    '    BUILDER_REF = "v0.1.1"',
-    '    STANDARDS_REF = "v0.1.1"',
+    '    BUILDER_REF = "v0.2.0"',
+    '    STANDARDS_REF = "v0.2.0"',
     '    MARKETPLACE = "extella-codex"',
     '    PLUGIN = "extella-codex-bridge@extella-codex"',
     '',
@@ -186,7 +190,7 @@ ETB.codexInstaller = (function () {
     '            return result("error", "plugin_install_failed",',
     '                "Не удалось установить Extella Codex Bridge. Можно безопасно повторить.")',
     '        return result("success", "plugin_installed",',
-    '            "Extella Codex Bridge установлен.", plugin_version="0.1.1")',
+    '            "Extella Codex Bridge установлен.", plugin_version="0.2.0")',
     '',
     '    if step == "credentials":',
     '        token = current_token()',
@@ -266,7 +270,7 @@ ETB.codexInstaller = (function () {
     '            return result("error", "verification_failed",',
     '                "Не удалось проверить итоговую конфигурацию Codex.")',
     '        return result("success", "ready", "Codex подключён к Extella.",',
-    '            plugin_version="0.1.1", restart_required=False,',
+    '            plugin_version="0.2.0", restart_required=False,',
     '            live_enabled=True, authorization_scope="account")',
     '',
     '    return result("error", "unsupported_step",',
@@ -338,13 +342,13 @@ ETB.codexInstaller = (function () {
     '        removed = subprocess.run([codex, "plugin", "marketplace", "remove", "extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90, env=env, shell=False)',
     '        if removed.returncode != 0:',
     '            return json.dumps({"status": "error", "code": "marketplace_remove_failed", "message": "Codex could not refresh the Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
-    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.1.1", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
+    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.2.0", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if added.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
     '    installed = subprocess.run([codex, "plugin", "add", "extella-codex-bridge@extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if installed.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "plugin_install_failed", "message": "Codex could not install Extella Codex Bridge.", "model_called": False, "agent_called": False, "paid": False})',
-    '    return json.dumps({"status": "success", "code": "plugin_installed", "message": "Extella Codex Bridge is installed.", "plugin_version": "0.1.1", "model_called": False, "agent_called": False, "paid": False})'
+    '    return json.dumps({"status": "success", "code": "plugin_installed", "message": "Extella Codex Bridge is installed.", "plugin_version": "0.2.0", "model_called": False, "agent_called": False, "paid": False})'
   ].join('\n');
 
   // This performs the local, secret-preserving preparation needed by the
@@ -413,7 +417,7 @@ ETB.codexInstaller = (function () {
     '        return json.dumps({"status": "error", "code": "plugin_list_failed", "message": "Codex could not inspect installed plugins.", "model_called": False, "agent_called": False, "paid": False})',
     '    try:',
     '        installed = json.loads(listing.stdout or "{}").get("installed", [])',
-    '        matches = [item for item in installed if item.get("pluginId") == "extella-codex-bridge@extella-codex" and item.get("installed") is True and item.get("enabled") is True and item.get("version") == "0.1.1"]',
+    '        matches = [item for item in installed if item.get("pluginId") == "extella-codex-bridge@extella-codex" and item.get("installed") is True and item.get("enabled") is True and item.get("version") == "0.2.0"]',
     '        plugin_path = str((matches[0].get("source") or {}).get("path") or "") if matches else ""',
     '    except Exception:',
     '        plugin_path = ""',
@@ -463,7 +467,7 @@ ETB.codexInstaller = (function () {
     '        return json.dumps({"status": "error", "code": "verification_failed", "message": "Extella Desktop could not verify the local Codex bridge.", "model_called": False, "agent_called": False, "paid": False})',
     '    if health.get("status") != "ok" or health.get("live_enabled") is not True or "codex" not in health.get("providers", []) or "account" not in health.get("authorization_scopes", []):',
     '        return json.dumps({"status": "error", "code": "bridge_verification_failed", "message": "The local Codex bridge did not confirm account-wide live mode.", "model_called": False, "agent_called": False, "paid": False})',
-    '    return json.dumps({"status": "success", "code": "ready", "message": "Codex is connected to Extella.", "plugin_version": "0.1.1", "restart_required": False, "live_enabled": True, "authorization_scope": "account", "model_called": False, "agent_called": False, "paid": False})'
+    '    return json.dumps({"status": "success", "code": "ready", "message": "Codex is connected to Extella.", "plugin_version": "0.2.0", "restart_required": False, "live_enabled": True, "authorization_scope": "account", "model_called": False, "agent_called": False, "paid": False})'
   ].join('\n');
 
   function metadata() {
@@ -559,7 +563,11 @@ ETB.codexInstaller = (function () {
   }
 
   function _canRunGlobalExpert(tools) {
-    return tools.indexOf('run_expert_mcp_extella') !== -1 ||
+    // Extella exposes the same account-global capability in two supported
+    // shapes: the short built-in tool on stock agents and the fully-qualified
+    // MCP tool on user agents. Either one can invoke the global bridge Expert.
+    return tools.indexOf('run_expert') !== -1 ||
+      tools.indexOf('run_expert_mcp_extella') !== -1 ||
       tools.indexOf('sys__all__sys_mcp_extella') !== -1 ||
       tools.indexOf('sys__server__sys_mcp_extella') !== -1;
   }
@@ -605,37 +613,19 @@ ETB.codexInstaller = (function () {
       });
   }
 
-  function _globalBridgeScopes(states) {
-    var scopes = [QWEN_SETUP_SCOPE];
-    (states || []).some(function (state) {
-      if (state.agentId && scopes.indexOf(state.agentId) === -1) {
-        scopes.push(state.agentId);
-        return true;
-      }
-      return false;
-    });
-    return scopes;
+  function _readGlobalBridge(bridge) {
+    // A global Expert belongs to the authenticated account, not to an agent
+    // scope. Public stock agents may expose it only through their system MCP,
+    // so a scoped get_expert is not a valid visibility check for them.
+    return ETB.api.getExpert(bridge.name, { global: true })
+      .catch(function () { return null; });
   }
 
-  function _readGlobalBridgeInScopes(bridge, scopes) {
-    return _mapLimit(scopes, 2, function (scope) {
-      return ETB.api.getExpertScoped(bridge.name, scope, { global: true })
-        .catch(function () { return null; })
-        .then(function (response) {
-          return {
-            scope: scope,
-            verified: _readExpertCode(response) === bridge.code
-          };
-        });
-    });
-  }
-
-  function _ensureGlobalBridge(states) {
+  function _ensureGlobalBridge() {
     var bridge = ETB.codexAccountBridge;
-    var scopes = _globalBridgeScopes(states);
-    return _readGlobalBridgeInScopes(bridge, scopes)
-      .then(function (checks) {
-        if (checks.every(function (check) { return check.verified; })) return null;
+    return _readGlobalBridge(bridge)
+      .then(function (response) {
+        if (_readExpertCode(response) === bridge.code) return null;
         return ETB.api.saveExpert({
           name: bridge.name,
           description: bridge.description,
@@ -649,13 +639,10 @@ ETB.codexInstaller = (function () {
           }
         });
       })
-      .then(function () { return _readGlobalBridgeInScopes(bridge, scopes); })
-      .then(function (checks) {
-        var failed = checks.filter(function (check) { return !check.verified; });
-        if (failed.length) {
-          throw new Error(
-            'Глобальный Codex Expert не виден агенту ' + failed[0].scope + '.'
-          );
+      .then(function () { return _readGlobalBridge(bridge); })
+      .then(function (response) {
+        if (_readExpertCode(response) !== bridge.code) {
+          throw new Error('Проверка глобального Codex Expert после сохранения не прошла.');
         }
       });
   }
@@ -781,7 +768,7 @@ ETB.codexInstaller = (function () {
       })
       .then(function (readStates) {
         states = readStates;
-        return _ensureGlobalBridge(states);
+        return _ensureGlobalBridge();
       })
       .then(function () {
         return _ensureRoutingRule();

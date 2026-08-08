@@ -17,7 +17,7 @@ flowchart LR
 ## Install the Codex plugin
 
 ```bash
-codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.1.1
+codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.2.0
 codex plugin add extella-codex-bridge@extella-codex
 ```
 
@@ -44,11 +44,29 @@ When the user explicitly asks to call Codex, Extella should invoke the global Ex
 run_expert(
   name="extella_codex_account_bridge_v2",
   global=true,
-  params={"prompt": "...", "max_output_tokens": 2000, "timeout_ms": 120000}
+  params={
+    "prompt": "...",
+    "max_output_tokens": 2000,
+    "timeout_ms": 120000
+  }
 )
 ```
 
+For every later call in that same Extella chat, add the value returned by the
+first call:
+
+```text
+params={"prompt": "...", "conversation_id": "ctx_..."}
+```
+
 Do not use `run_agent` for this route. The bridge Expert is the tool boundary; the requesting agent's own model provider key is not needed by the local Codex bridge.
+
+The first successful call returns an opaque `conversation_id`. Reuse it only
+inside the same Extella chat. The local bridge maps it to a persisted Codex
+thread and resumes that thread on later calls, so Codex receives its complete
+conversation history without Extella resending or summarizing it. A different
+Extella chat omits `conversation_id` and therefore receives a separate Codex
+thread. Raw Codex thread IDs never leave the local bridge.
 
 ## Cost behavior
 

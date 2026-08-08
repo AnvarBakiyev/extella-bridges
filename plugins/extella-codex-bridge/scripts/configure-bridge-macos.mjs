@@ -7,6 +7,7 @@ import {
   chmod,
   copyFile,
   mkdir,
+  readFile,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -207,6 +208,22 @@ async function assertPortAvailable(port) {
   });
 }
 
+async function existingConfiguredPort(plistPath) {
+  try {
+    const source = await readFile(plistPath, "utf8");
+    const match = source.match(
+      /<key>EXTELLA_BRIDGE_PORT<\/key>\s*<string>(\d+)<\/string>/,
+    );
+    const port = Number.parseInt(match?.[1] || "", 10);
+    if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
+      return port;
+    }
+  } catch {
+    // A missing or unreadable plist means this is a first-time setup.
+  }
+  return null;
+}
+
 async function writeRuntime(runtimeDir) {
   await mkdir(join(runtimeDir, "scripts"), { recursive: true, mode: 0o700 });
   await mkdir(join(runtimeDir, "schemas"), { recursive: true, mode: 0o700 });
@@ -314,17 +331,28 @@ ${scrubArguments}
 
 async function waitForHealth(port) {
   let lastError;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  let consecutiveSuccesses = 0;
+  let lastPayload;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`);
       if (response.ok) {
         const payload = await response.json();
         if (payload.status === "ok") {
-          return payload;
+          consecutiveSuccesses += 1;
+          lastPayload = payload;
+          if (consecutiveSuccesses >= 3) {
+            return lastPayload;
+          }
+        } else {
+          consecutiveSuccesses = 0;
+          lastError = new Error("Health response did not identify the bridge");
         }
-        lastError = new Error("Health response did not identify the bridge");
+      } else {
+        consecutiveSuccesses = 0;
       }
     } catch (error) {
+      consecutiveSuccesses = 0;
       lastError = error;
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
@@ -354,7 +382,6 @@ async function main() {
   if (process.platform !== "darwin") {
     throw new Error("Persistent bridge setup currently supports macOS only");
   }
-  const options = validateOptions(parsed);
   const supportDir = join(
     homedir(),
     "Library",
@@ -367,6 +394,14 @@ async function main() {
   const launchAgentsDir = join(homedir(), "Library", "LaunchAgents");
   const plistPath = join(launchAgentsDir, `${LABEL}.plist`);
   const domain = `gui/${process.getuid()}`;
+  const existingPort = parsed.disable
+    ? null
+    : await existingConfiguredPort(plistPath);
+  const options = validateOptions(
+    parsed.port == null && existingPort != null
+      ? { ...parsed, port: existingPort }
+      : parsed,
+  );
   if (options.disable) {
     await launchctl(["bootout", domain, plistPath], { ignoreFailure: true });
     await launchctl(["disable", `${domain}/${LABEL}`]);
@@ -441,7 +476,6 @@ async function main() {
 
     await launchctl(["enable", `${domain}/${LABEL}`]);
     await launchctl(["bootstrap", domain, plistPath]);
-    await launchctl(["kickstart", "-k", `${domain}/${LABEL}`]);
     health = await waitForHealth(options.port);
   } catch (error) {
     await launchctl(["bootout", domain, plistPath], { ignoreFailure: true });
@@ -494,6 +528,7 @@ export {
   SCRUB_BEFORE_NODE,
   assertPortAvailable,
   deriveAccountBinding,
+  existingConfiguredPort,
   main,
   parseArgs,
   plist,

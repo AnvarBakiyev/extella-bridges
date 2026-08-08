@@ -34,10 +34,15 @@ const REQUEST_KEYS_V1_1 = new Set([
   "prompt",
   "budget",
 ]);
+const REQUEST_KEYS_V1_2 = new Set([
+  ...REQUEST_KEYS_V1_1,
+  "conversation_id",
+]);
 const BUDGET_KEYS = new Set(["max_output_tokens", "timeout_ms"]);
 const EVENT_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 const AGENT_ID = /^agent_[A-Za-z0-9_-]{8,128}$/;
 const ACCOUNT_BINDING = /^[a-f0-9]{64}$/;
+const CONVERSATION_ID = /^ctx_[A-Za-z0-9_-]{32,64}$/;
 const CAPABILITY = /^[a-z][a-z0-9-]{1,63}$/;
 const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 const SIGNATURE = /^sha256=([a-f0-9]{64})$/;
@@ -47,6 +52,10 @@ const PROVIDER_ERROR_MESSAGES = new Map([
     "Codex completed the task, but its answer exceeded max_output_tokens",
   ],
   ["codex_timed_out", "Codex did not finish before timeout_ms"],
+  [
+    "codex_conversation_not_found",
+    "This Extella chat no longer has a saved local Codex conversation",
+  ],
   ["codex_chatgpt_auth_required", "Codex must be signed in with ChatGPT"],
   [
     "codex_configuration_incompatible",
@@ -165,6 +174,15 @@ function signingPayload(timestamp, nonce, rawBody) {
   ]);
 }
 
+function contextBinding(config, delegation) {
+  if (delegation.account_binding) {
+    return delegation.account_binding;
+  }
+  return createHmac("sha256", config.secret)
+    .update(`extella-agent-context-v1.${delegation.agent_id}`, "utf8")
+    .digest("hex");
+}
+
 function signRequest({ secret, timestamp, nonce, rawBody }) {
   const body = Buffer.isBuffer(rawBody)
     ? rawBody
@@ -231,17 +249,21 @@ function validateDelegation(value, config) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new BridgeError(400, "invalid_request", "Body must be a JSON object");
   }
-  const accountScoped = value.schema_version === "1.1";
+  const accountScoped = ["1.1", "1.2"].includes(value.schema_version);
   if (!accountScoped && value.schema_version !== "1.0") {
     throw new BridgeError(
       400,
       "invalid_request",
-      "schema_version must equal 1.0 or 1.1",
+      "schema_version must equal 1.0, 1.1, or 1.2",
     );
   }
   exactKeys(
     value,
-    accountScoped ? REQUEST_KEYS_V1_1 : REQUEST_KEYS_V1,
+    value.schema_version === "1.2"
+      ? REQUEST_KEYS_V1_2
+      : accountScoped
+        ? REQUEST_KEYS_V1_1
+        : REQUEST_KEYS_V1,
     "request",
   );
   if (!EVENT_ID.test(value.event_id || "")) {
@@ -257,6 +279,17 @@ function validateDelegation(value, config) {
     }
   } else if (!AGENT_ID.test(value.agent_id || "")) {
     throw new BridgeError(400, "invalid_request", "agent_id is invalid");
+  }
+  if (
+    value.schema_version === "1.2" &&
+    value.conversation_id !== undefined &&
+    !CONVERSATION_ID.test(value.conversation_id)
+  ) {
+    throw new BridgeError(
+      400,
+      "invalid_request",
+      "conversation_id is invalid",
+    );
   }
   if (!CAPABILITY.test(value.capability || "")) {
     throw new BridgeError(400, "invalid_request", "capability is invalid");
@@ -438,6 +471,8 @@ function createBridgeServer(options) {
           provider: delegation.provider,
           prompt: delegation.prompt,
           eventId: delegation.event_id,
+          accountBinding: contextBinding(config, delegation),
+          conversationId: delegation.conversation_id,
           workspace: config.workspace,
           stateDir: config.stateDir,
           live: config.live,

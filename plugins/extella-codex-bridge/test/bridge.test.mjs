@@ -1,16 +1,27 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { scrubCredentialEnvironment } from "../scripts/bridge-entry.mjs";
 import { createBridgeServer, signRequest } from "../scripts/bridge-core.mjs";
-import { deriveAccountBinding } from "../scripts/configure-bridge-macos.mjs";
+import {
+  deriveAccountBinding,
+  existingConfiguredPort,
+} from "../scripts/configure-bridge-macos.mjs";
+import {
+  RULE_MARKER,
+  RULE_TEXT,
+  expertCode,
+} from "../scripts/deploy-extella-assets.mjs";
 import {
   ProviderAdapterError,
   codexArguments,
+  codexResumeArguments,
+  invokeProvider,
   safeProviderDiagnostic,
 } from "../scripts/invoke-provider.mjs";
 
@@ -82,6 +93,44 @@ test("another Extella account binding is rejected", async (t) => {
   assert.equal(response.status, 403);
 });
 
+test("bridge updates preserve the port from the existing LaunchAgent", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "extella-port-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const plistPath = join(directory, "bridge.plist");
+  await writeFile(
+    plistPath,
+    "<key>EXTELLA_BRIDGE_PORT</key>\n<string>18787</string>\n",
+    "utf8",
+  );
+  assert.equal(await existingConfiguredPort(plistPath), 18787);
+});
+
+test("account-wide schema 1.2 accepts a bounded conversation ID", async (t) => {
+  const { server, url } = await startBridge();
+  t.after(() => server.close());
+  const response = await signedPost(
+    url,
+    body({
+      schema_version: "1.2",
+      conversation_id: `ctx_${"a".repeat(32)}`,
+    }),
+  );
+  assert.equal(response.status, 200);
+});
+
+test("account-wide schema 1.2 rejects an unsafe conversation ID", async (t) => {
+  const { server, url } = await startBridge();
+  t.after(() => server.close());
+  const response = await signedPost(
+    url,
+    body({
+      schema_version: "1.2",
+      conversation_id: "../../another-chat",
+    }),
+  );
+  assert.equal(response.status, 400);
+});
+
 test("account binding is deterministic but does not contain the token", () => {
   const token = "example-extella-token-that-must-not-leak";
   const first = deriveAccountBinding(SECRET, token);
@@ -122,6 +171,88 @@ test("Codex invocation disables tools, apps, multi-agent, shell, and web", () =>
   ]) {
     assert.match(serialized, new RegExp(setting.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.equal(args.includes("--ephemeral"), false);
+  assert.match(serialized, /history\.persistence="save-all"/);
+});
+
+test("Codex resume targets one persisted thread without ephemeral mode", () => {
+  const threadId = "77777777-7777-4777-8777-777777777777";
+  const args = codexResumeArguments(threadId);
+  assert.deepEqual(args.slice(0, 2), ["exec", "resume"]);
+  assert.equal(args.includes(threadId), true);
+  assert.equal(args.includes("--ephemeral"), false);
+  assert.match(args.join(" "), /sandbox_mode="read-only"/);
+});
+
+test("live bridge creates and resumes an isolated Codex conversation", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "extella-codex-context-"));
+  const argsLog = join(temporary, "codex-args.jsonl");
+  const previous = {
+    CODEX_BIN: process.env.CODEX_BIN,
+    EXTELLA_AGENT_BUILDER_LIVE: process.env.EXTELLA_AGENT_BUILDER_LIVE,
+    FAKE_CODEX_ARGS_LOG: process.env.FAKE_CODEX_ARGS_LOG,
+  };
+  process.env.CODEX_BIN = join(ROOT, "test", "fixtures", "bin", "fake-codex");
+  process.env.EXTELLA_AGENT_BUILDER_LIVE = "I_UNDERSTAND_COST";
+  process.env.FAKE_CODEX_ARGS_LOG = argsLog;
+  t.after(async () => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(temporary, { recursive: true, force: true });
+  });
+
+  const first = await invokeProvider({
+    provider: "codex",
+    live: true,
+    accountBinding: BINDING,
+    eventId: "evt_context_first",
+    prompt: "Remember the first turn.",
+    workspace: temporary,
+    stateDir: join(temporary, "state"),
+  });
+  assert.match(first.conversation_id, /^ctx_[A-Za-z0-9_-]{32,64}$/);
+  assert.doesNotMatch(JSON.stringify(first), /77777777-7777-4777-8777-777777777777/);
+
+  const second = await invokeProvider({
+    provider: "codex",
+    live: true,
+    accountBinding: BINDING,
+    conversationId: first.conversation_id,
+    eventId: "evt_context_second",
+    prompt: "Continue the same conversation.",
+    workspace: temporary,
+    stateDir: join(temporary, "state"),
+  });
+  assert.equal(second.conversation_id, first.conversation_id);
+
+  await assert.rejects(
+    invokeProvider({
+      provider: "codex",
+      live: true,
+      accountBinding: "b".repeat(64),
+      conversationId: first.conversation_id,
+      eventId: "evt_context_other_account",
+      prompt: "This account must not see the conversation.",
+      workspace: temporary,
+      stateDir: join(temporary, "state"),
+    }),
+    (error) => error?.diagnostic?.code === "codex_conversation_not_found",
+  );
+
+  const calls = (await readFile(argsLog, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "exec");
+  assert.notEqual(calls[0][1], "resume");
+  assert.deepEqual(calls[1].slice(0, 2), ["exec", "resume"]);
+  assert.equal(
+    calls[1].includes("77777777-7777-4777-8777-777777777777"),
+    true,
+  );
 });
 
 test("output-budget failure exposes only safe structured diagnostics", () => {
@@ -149,6 +280,8 @@ test("global Expert is loopback-only and supports 2000 output tokens", async () 
   assert.match(expert, /127\.0\.0\.1/);
   assert.match(expert, /max_output_tokens: int = 2000/);
   assert.match(expert, /max_output_tokens > 2000/);
+  assert.match(expert, /conversation_id: str = ""/);
+  assert.match(expert, /"schema_version": "1\.2"/);
   assert.match(expert, /urllib\.error\.HTTPError/);
   assert.doesNotMatch(expert, /https?:\/\/(?!127\.0\.0\.1)/);
 });
@@ -203,4 +336,24 @@ test("standalone Expert matches the code embedded in the desktop adapter", async
     "utf8",
   );
   assert.equal(standalone.trimEnd(), embedded);
+  const declaredHash = source.match(/var SHA256 = '([a-f0-9]{64})'/)?.[1];
+  assert.equal(
+    declaredHash,
+    createHash("sha256").update(embedded).digest("hex"),
+  );
+});
+
+test("REST deployment uses the same persistent-context routing rule", async () => {
+  const installer = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  assert.equal(RULE_MARKER, "EXTELLA_CODEX_ROUTING_V2");
+  assert.match(RULE_TEXT, /reuse its conversation_id/);
+  assert.match(RULE_TEXT, /never summarize or truncate/);
+  assert.match(
+    installer,
+    new RegExp(`ROUTING_RULE_MARKER = '${RULE_MARKER}'`),
+  );
+  assert.equal(expertCode({ expert_code: "stored" }), "stored");
 });
