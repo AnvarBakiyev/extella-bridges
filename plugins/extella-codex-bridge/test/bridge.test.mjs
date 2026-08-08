@@ -286,6 +286,22 @@ test("global Expert is loopback-only and supports 2000 output tokens", async () 
   assert.doesNotMatch(expert, /https?:\/\/(?!127\.0\.0\.1)/);
 });
 
+test("global Expert prefers active launchd bridge transport settings", async () => {
+  const expert = await readFile(
+    join(ROOT, "experts", "extella_codex_account_bridge_v2.fython"),
+    "utf8",
+  );
+  assert.match(
+    expert,
+    /secret = launch_environment\("EXTELLA_BRIDGE_SECRET"\) or os\.environ\.get/,
+  );
+  assert.match(
+    expert,
+    /launch_environment\("EXTELLA_BRIDGE_PORT"\) or\s+os\.environ\.get/,
+  );
+  assert.match(expert, /token = local_environment\("EXTELLA_API_TOKEN"\)/);
+});
+
 test("MCP configuration uses environment references and contains no tokens", async () => {
   const source = await readFile(join(ROOT, ".mcp.json"), "utf8");
   const config = JSON.parse(source);
@@ -319,6 +335,8 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
+  assert.match(source, /var PLUGIN_VERSION = '0\.2\.1'/);
+  assert.doesNotMatch(source, /0\.2\.0/);
 });
 
 test("standalone Expert matches the code embedded in the desktop adapter", async () => {
