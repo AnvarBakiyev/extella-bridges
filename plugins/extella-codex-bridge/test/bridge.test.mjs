@@ -348,8 +348,10 @@ test("REST deployment uses the same persistent-context routing rule", async () =
     join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
     "utf8",
   );
-  assert.equal(RULE_MARKER, "EXTELLA_CODEX_ROUTING_V2");
-  assert.match(RULE_TEXT, /reuse its conversation_id/);
+  assert.equal(RULE_MARKER, "EXTELLA_CODEX_ROUTING_V3");
+  assert.match(RULE_TEXT, /Codex mode as active/);
+  assert.match(RULE_TEXT, /every later user message/);
+  assert.match(RULE_TEXT, /deactivate the mode/);
   assert.match(RULE_TEXT, /never summarize or truncate/);
   assert.match(
     installer,

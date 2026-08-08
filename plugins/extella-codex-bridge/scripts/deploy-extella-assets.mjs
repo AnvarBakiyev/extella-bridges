@@ -13,20 +13,26 @@ const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
 const BASE_URL = "https://api.extella.ai";
 const AGENT_ID = "agent_extella_alibaba_default";
 const EXPERT_NAME = "extella_codex_account_bridge_v2";
-const RULE_MARKER = "EXTELLA_CODEX_ROUTING_V2";
+const RULE_MARKER = "EXTELLA_CODEX_ROUTING_V3";
 const RULE_TEXT =
-  `${RULE_MARKER}: When the user explicitly asks to call or consult Codex, ` +
-  "never use run_agent and never start another Extella agent. If the " +
-  "extella_codex_account_bridge_v2 tool is directly available, call it with " +
-  "the user request as prompt. Otherwise call run_expert directly with " +
-  'name="extella_codex_account_bridge_v2", global=true, and params containing ' +
-  "the user request as prompt. After a successful call, reuse its " +
-  "conversation_id for every later Codex call in this same Extella chat. If " +
-  "this chat has no previous conversation_id, omit it so the bridge creates a " +
-  "new Codex thread. Never reuse a conversation_id from another chat and " +
-  "never summarize or truncate the Codex thread history. Do not call " +
+  `${RULE_MARKER}: Codex mode is inactive by default. A one-off request to ` +
+  "call or consult Codex must call Codex once and must not activate continuous " +
+  "mode. When the user explicitly asks to start, enter, or switch to a " +
+  "continuous Codex dialogue, call Codex and, after a successful call, treat " +
+  "Codex mode as active in this Extella chat. While Codex mode is active, " +
+  "route every later user message directly to Codex without requiring the " +
+  "user to mention Codex again, always reusing the conversation_id returned " +
+  "in this same chat. When the user asks to stop, exit, or return from Codex " +
+  "mode, do not send that command to Codex; deactivate the mode and reply " +
+  "locally. If no conversation_id exists in this chat, omit it so the bridge " +
+  "creates a new Codex thread. Never reuse a conversation_id from another " +
+  "chat and never summarize or truncate the Codex thread history. For every " +
+  "bridge call, use extella_codex_account_bridge_v2 directly when available; " +
+  "otherwise call run_expert with name=\"extella_codex_account_bridge_v2\", " +
+  "global=true, and params containing prompt and the current conversation_id. " +
+  "Never use run_agent, never start another Extella agent, and do not call " +
   "get_expert or search_experts first. Do not call Codex unless the user " +
-  "explicitly asks.";
+  "explicitly asks or Codex mode is already active in this chat.";
 
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");

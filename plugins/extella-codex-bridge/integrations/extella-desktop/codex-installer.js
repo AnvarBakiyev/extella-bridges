@@ -6,32 +6,38 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = 'a40bf339e8afd81f8c895649da4f780debd3f290b68952cba081b474b4f117f8';
+  var EXPERT_SHA256 = '87c9b780af99dfadadb9c7a43c1dd217789f8792cba9ee72863c581a4c1efdc8';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '445d111131ef27784d39fe5a665cd86f209a6624984beb6431f19c5af36abbc5';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
-  var INSTALL_EXPERT_SHA256 = '11f3998ca4cb16590a91d519d240872dd5b6c0901b698c353c32506a803c39fc';
+  var INSTALL_EXPERT_SHA256 = '6f9c14af602d5d6b6737c426ddf72f183dd7c19ddea5b0d4acb5dc088ad87281';
   var CREDENTIALS_EXPERT_NAME = 'extella_codex_credentials_v1';
   var CREDENTIALS_EXPERT_SHA256 = 'cd3d10475328dd915aa6504642f366c7d891846fb9450c237bd3ffcbd49dc586';
   var BRIDGE_EXPERT_NAME = 'extella_codex_bridge_setup_v1';
   var BRIDGE_EXPERT_SHA256 = '52bdfab5b3c535f308b990d74992cee7e0ecc50ca3a4c24ebf985d727e4b59e2';
   var VERIFY_EXPERT_NAME = 'extella_codex_verify_v1';
   var VERIFY_EXPERT_SHA256 = 'f75503d66e0ab2a7f30706ee2d93a3599baaf69f7aecb6137bb96f02ffbf8f1a';
-  var PLUGIN_VERSION = '0.2.0';
-  var STANDARDS_REF = 'v0.2.0';
+  var PLUGIN_VERSION = '0.2.1';
+  var STANDARDS_REF = 'v0.2.1';
   var STATE_KEY = 'extella:codex-connection:v2';
-  var ROUTING_RULE_MARKER = 'EXTELLA_CODEX_ROUTING_V2';
+  var ROUTING_RULE_MARKER = 'EXTELLA_CODEX_ROUTING_V3';
   var ROUTING_RULE_TEXT = ROUTING_RULE_MARKER +
-    ': When the user explicitly asks to call or consult Codex, never use run_agent ' +
-    'and never start another Extella agent. If the extella_codex_account_bridge_v2 tool is ' +
-    'directly available, call it with the user request as prompt. Otherwise call ' +
-    'run_expert directly with name="extella_codex_account_bridge_v2", global=true, and ' +
-    'params containing the user request as prompt. After a successful call, reuse its ' +
-    'conversation_id for every later Codex call in this same Extella chat. If this chat ' +
-    'has no previous conversation_id, omit it so the bridge creates a new Codex thread. ' +
-    'Never reuse a conversation_id from another chat and never summarize or truncate the ' +
-    'Codex thread history. Do not call get_expert or ' +
-    'search_experts first. Do not call Codex unless the user explicitly asks.';
+    ': Codex mode is inactive by default. A one-off request to call or consult Codex ' +
+    'must call Codex once and must not activate continuous mode. When the user explicitly ' +
+    'asks to start, enter, or switch to a continuous Codex dialogue, call Codex and, after ' +
+    'a successful call, treat Codex mode as active in this Extella chat. While Codex mode ' +
+    'is active, route every later user message directly to Codex without requiring the ' +
+    'user to mention Codex again, always reusing the conversation_id returned in this ' +
+    'same chat. When the user asks to stop, exit, or return from Codex mode, do not send ' +
+    'that command to Codex; deactivate the mode and reply locally. If no conversation_id ' +
+    'exists in this chat, omit it so the bridge creates a new Codex thread. Never reuse a ' +
+    'conversation_id from another chat and never summarize or truncate the Codex thread ' +
+    'history. For every bridge call, use extella_codex_account_bridge_v2 directly when ' +
+    'available; otherwise call run_expert with name="extella_codex_account_bridge_v2", ' +
+    'global=true, and params containing prompt and the current conversation_id. Never use ' +
+    'run_agent, never start another Extella agent, and do not call get_expert or ' +
+    'search_experts first. Do not call Codex unless the user explicitly asks or Codex mode ' +
+    'is already active in this chat.';
   // Setup is stored in the stock Qwen scope. Device choice belongs to Extella's
   // default-target resolver at run time, not to expert storage.
   var QWEN_SETUP_SCOPE = 'agent_extella_alibaba_default';
@@ -42,8 +48,8 @@ ETB.codexInstaller = (function () {
     'def _etb_codex_setup_v2(step="preflight") -> str:',
     '    import json, os, platform, secrets, shutil, subprocess, urllib.request',
     '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-codex-bridge.git"',
-    '    BUILDER_REF = "v0.2.0"',
-    '    STANDARDS_REF = "v0.2.0"',
+    '    BUILDER_REF = "v0.2.1"',
+    '    STANDARDS_REF = "v0.2.1"',
     '    MARKETPLACE = "extella-codex"',
     '    PLUGIN = "extella-codex-bridge@extella-codex"',
     '',
@@ -342,7 +348,7 @@ ETB.codexInstaller = (function () {
     '        removed = subprocess.run([codex, "plugin", "marketplace", "remove", "extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90, env=env, shell=False)',
     '        if removed.returncode != 0:',
     '            return json.dumps({"status": "error", "code": "marketplace_remove_failed", "message": "Codex could not refresh the Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
-    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.2.0", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
+    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.2.1", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if added.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
     '    installed = subprocess.run([codex, "plugin", "add", "extella-codex-bridge@extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',

@@ -17,7 +17,7 @@ flowchart LR
 ## Install the Codex plugin
 
 ```bash
-codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.2.0
+codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.2.1
 codex plugin add extella-codex-bridge@extella-codex
 ```
 
@@ -67,6 +67,11 @@ thread and resumes that thread on later calls, so Codex receives its complete
 conversation history without Extella resending or summarizing it. A different
 Extella chat omits `conversation_id` and therefore receives a separate Codex
 thread. Raw Codex thread IDs never leave the local bridge.
+
+For a continuous conversation, say **"Start Codex mode"** once. After the first
+successful bridge call, every later message in that Extella chat is routed to
+the same Codex thread until you say **"Exit Codex mode"**. A one-off request such
+as **"Ask Codex to review this"** does not enable continuous mode.
 
 ## Cost behavior
 

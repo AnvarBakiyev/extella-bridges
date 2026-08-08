@@ -1,6 +1,6 @@
 {
   "name": "extella-codex-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Connect Codex and Extella in both directions through Extella MCP and a signed local account-wide bridge.",
   "author": {
     "name": "Extella"
