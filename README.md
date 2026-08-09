@@ -17,7 +17,7 @@ flowchart LR
 ## Install the Codex plugin
 
 ```bash
-codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.2.1
+codex plugin marketplace add AnvarBakiyev/extella-codex-bridge --ref v0.3.0
 codex plugin add extella-codex-bridge@extella-codex
 ```
 

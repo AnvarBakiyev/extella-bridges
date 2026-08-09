@@ -13,7 +13,7 @@ const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
 const BASE_URL = "https://api.extella.ai";
 const AGENT_ID = "agent_extella_alibaba_default";
 const EXPERT_NAME = "extella_codex_account_bridge_v2";
-const RULE_MARKER = "EXTELLA_CODEX_ROUTING_V3";
+const RULE_MARKER = "EXTELLA_CODEX_ROUTING_V4";
 const RULE_TEXT =
   `${RULE_MARKER}: Codex mode is inactive by default. A one-off request to ` +
   "call or consult Codex must call Codex once and must not activate continuous " +
@@ -29,7 +29,12 @@ const RULE_TEXT =
   "chat and never summarize or truncate the Codex thread history. For every " +
   "bridge call, use extella_codex_account_bridge_v2 directly when available; " +
   "otherwise call run_expert with name=\"extella_codex_account_bridge_v2\", " +
-  "global=true, and params containing prompt and the current conversation_id. " +
+  "global=true, and params containing prompt, the current conversation_id, and " +
+  "execution_profile_id. Use execution_profile_id=\"answer-only\" unless the " +
+  "user explicitly selects another profile that the bridge reports as available. " +
+  "A saved conversation_id must always keep its original execution_profile_id; " +
+  "to change profiles, start a new Codex conversation. Never pass raw runtime, " +
+  "tool, retry, filesystem, network, or shell flags through the Expert. " +
   "Never use run_agent, never start another Extella agent, and do not call " +
   "get_expert or search_experts first. Do not call Codex unless the user " +
   "explicitly asks or Codex mode is already active in this chat.";
@@ -132,13 +137,14 @@ async function main() {
       name: EXPERT_NAME,
       description:
         "Delegate a bounded text task to local Codex and resume an isolated " +
-        "conversation for the current Extella chat.",
+        "conversation for the current Extella chat under a reviewed execution profile.",
       code,
       cspl: "fython",
       global: true,
       kwargs: {
         prompt: "",
         conversation_id: "",
+        execution_profile_id: "answer-only",
         max_output_tokens: 2000,
         timeout_ms: 120000,
       },

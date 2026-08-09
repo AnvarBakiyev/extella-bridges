@@ -1,11 +1,12 @@
 {
   "name": "@extella/codex-bridge",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Signed local bridge between Extella agents and Codex",
   "scripts": {
     "deploy:extella": "node scripts/deploy-extella-assets.mjs",
+    "sync:account-bridge": "node scripts/sync-account-bridge.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "engines": {

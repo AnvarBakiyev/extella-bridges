@@ -9,6 +9,13 @@ import {
   invokeProvider,
   safeProviderDiagnostic,
 } from "./invoke-provider.mjs";
+import {
+  DEFAULT_EXECUTION_PROFILE_ID,
+  EXECUTION_POLICY_VERSION,
+  ExecutionProfileError,
+  executionProfileCatalog,
+  resolveExecutionProfile,
+} from "./execution-profiles.mjs";
 
 const LOOPBACK_ADDRESSES = new Set([
   "127.0.0.1",
@@ -38,6 +45,10 @@ const REQUEST_KEYS_V1_2 = new Set([
   ...REQUEST_KEYS_V1_1,
   "conversation_id",
 ]);
+const REQUEST_KEYS_V1_3 = new Set([
+  ...REQUEST_KEYS_V1_2,
+  "execution_profile_id",
+]);
 const BUDGET_KEYS = new Set(["max_output_tokens", "timeout_ms"]);
 const EVENT_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 const AGENT_ID = /^agent_[A-Za-z0-9_-]{8,128}$/;
@@ -57,6 +68,10 @@ const PROVIDER_ERROR_MESSAGES = new Map([
     "This Extella chat no longer has a saved local Codex conversation",
   ],
   ["codex_chatgpt_auth_required", "Codex must be signed in with ChatGPT"],
+  [
+    "codex_conversation_profile_mismatch",
+    "This Codex conversation uses a different execution profile",
+  ],
   [
     "codex_configuration_incompatible",
     "The local Codex configuration is incompatible with the bridge",
@@ -249,21 +264,23 @@ function validateDelegation(value, config) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new BridgeError(400, "invalid_request", "Body must be a JSON object");
   }
-  const accountScoped = ["1.1", "1.2"].includes(value.schema_version);
+  const accountScoped = ["1.1", "1.2", "1.3"].includes(value.schema_version);
   if (!accountScoped && value.schema_version !== "1.0") {
     throw new BridgeError(
       400,
       "invalid_request",
-      "schema_version must equal 1.0, 1.1, or 1.2",
+      "schema_version must equal 1.0, 1.1, 1.2, or 1.3",
     );
   }
   exactKeys(
     value,
-    value.schema_version === "1.2"
-      ? REQUEST_KEYS_V1_2
-      : accountScoped
-        ? REQUEST_KEYS_V1_1
-        : REQUEST_KEYS_V1,
+    value.schema_version === "1.3"
+      ? REQUEST_KEYS_V1_3
+      : value.schema_version === "1.2"
+        ? REQUEST_KEYS_V1_2
+        : accountScoped
+          ? REQUEST_KEYS_V1_1
+          : REQUEST_KEYS_V1,
     "request",
   );
   if (!EVENT_ID.test(value.event_id || "")) {
@@ -281,7 +298,7 @@ function validateDelegation(value, config) {
     throw new BridgeError(400, "invalid_request", "agent_id is invalid");
   }
   if (
-    value.schema_version === "1.2" &&
+    ["1.2", "1.3"].includes(value.schema_version) &&
     value.conversation_id !== undefined &&
     !CONVERSATION_ID.test(value.conversation_id)
   ) {
@@ -355,9 +372,22 @@ function validateDelegation(value, config) {
       "provider is not enabled",
     );
   }
+  let executionProfile;
+  try {
+    executionProfile = resolveExecutionProfile(
+      value.execution_profile_id || DEFAULT_EXECUTION_PROFILE_ID,
+    );
+  } catch (error) {
+    if (error instanceof ExecutionProfileError) {
+      throw new BridgeError(400, error.code, error.message);
+    }
+    throw error;
+  }
   return {
     ...value,
     prompt: value.prompt.trim(),
+    execution_profile_id: executionProfile.id,
+    execution_profile: executionProfile,
     budget: {
       max_output_tokens: maxOutputTokens,
       timeout_ms: timeoutMs,
@@ -424,6 +454,9 @@ function createBridgeServer(options) {
           live_enabled: config.live,
           providers: [...config.allowedProviders],
           authorization_scopes: authorizationScopes,
+          execution_policy_version: EXECUTION_POLICY_VERSION,
+          default_execution_profile_id: DEFAULT_EXECUTION_PROFILE_ID,
+          execution_profiles: executionProfileCatalog(),
         });
         return;
       }
@@ -473,6 +506,7 @@ function createBridgeServer(options) {
           eventId: delegation.event_id,
           accountBinding: contextBinding(config, delegation),
           conversationId: delegation.conversation_id,
+          executionProfile: delegation.execution_profile,
           workspace: config.workspace,
           stateDir: config.stateDir,
           live: config.live,

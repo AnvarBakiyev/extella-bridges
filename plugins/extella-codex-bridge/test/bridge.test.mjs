@@ -22,6 +22,7 @@ import {
   codexArguments,
   codexResumeArguments,
   invokeProvider,
+  runPreflightWithRetry,
   safeProviderDiagnostic,
 } from "../scripts/invoke-provider.mjs";
 
@@ -52,7 +53,11 @@ async function startBridge() {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address();
-  return { server, url: `http://127.0.0.1:${port}/v1/delegate` };
+  return {
+    server,
+    url: `http://127.0.0.1:${port}/v1/delegate`,
+    healthUrl: `http://127.0.0.1:${port}/health`,
+  };
 }
 
 async function signedPost(url, payload) {
@@ -84,6 +89,88 @@ test("signed account-wide mock delegation succeeds", async (t) => {
   const result = await response.json();
   assert.equal(result.status, "completed");
   assert.equal(result.cost_guard, "no_model_called");
+  assert.deepEqual(result.execution_profile, {
+    id: "answer-only",
+    policy_version: "1.0",
+  });
+});
+
+test("schema 1.3 accepts the available answer-only profile", async (t) => {
+  const { server, url } = await startBridge();
+  t.after(() => server.close());
+  const response = await signedPost(
+    url,
+    body({
+      schema_version: "1.3",
+      execution_profile_id: "answer-only",
+    }),
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.execution_profile.id, "answer-only");
+});
+
+test("planned and unknown execution profiles fail closed", async (t) => {
+  const { server, url } = await startBridge();
+  t.after(() => server.close());
+
+  const planned = await signedPost(
+    url,
+    body({
+      schema_version: "1.3",
+      execution_profile_id: "workspace-read",
+    }),
+  );
+  assert.equal(planned.status, 400);
+  assert.equal(
+    (await planned.json()).error.code,
+    "execution_profile_unavailable",
+  );
+
+  const unknown = await signedPost(
+    url,
+    body({
+      schema_version: "1.3",
+      execution_profile_id: "unreviewed-profile",
+    }),
+  );
+  assert.equal(unknown.status, 400);
+  assert.equal((await unknown.json()).error.code, "execution_profile_unknown");
+});
+
+test("raw execution flags cannot cross the bridge contract", async (t) => {
+  const { server, url } = await startBridge();
+  t.after(() => server.close());
+  const response = await signedPost(
+    url,
+    body({
+      schema_version: "1.3",
+      execution_profile_id: "answer-only",
+      tools_disabled: false,
+    }),
+  );
+  assert.equal(response.status, 400);
+  const result = await response.json();
+  assert.equal(result.error.code, "invalid_request");
+  assert.match(result.error.message, /tools_disabled is not allowed/);
+});
+
+test("health publishes the reviewed execution-profile catalog", async (t) => {
+  const { server, healthUrl } = await startBridge();
+  t.after(() => server.close());
+  const response = await fetch(healthUrl);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.execution_policy_version, "1.0");
+  assert.equal(result.default_execution_profile_id, "answer-only");
+  assert.deepEqual(
+    result.execution_profiles.map(({ id, status }) => ({ id, status })),
+    [
+      { id: "answer-only", status: "available" },
+      { id: "workspace-read", status: "planned" },
+      { id: "web-research", status: "planned" },
+    ],
+  );
 });
 
 test("another Extella account binding is rejected", async (t) => {
@@ -184,6 +271,29 @@ test("Codex resume targets one persisted thread without ephemeral mode", () => {
   assert.match(args.join(" "), /sandbox_mode="read-only"/);
 });
 
+test("preflight retry is bounded and stops after success", async () => {
+  let attempts = 0;
+  const result = await runPreflightWithRetry(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("transient preflight failure");
+    return "ready";
+  }, 1);
+  assert.equal(result, "ready");
+  assert.equal(attempts, 2);
+});
+
+test("preflight retry never exceeds its reviewed budget", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    runPreflightWithRetry(async () => {
+      attempts += 1;
+      throw new Error("still unavailable");
+    }, 1),
+    /still unavailable/,
+  );
+  assert.equal(attempts, 2);
+});
+
 test("live bridge creates and resumes an isolated Codex conversation", async (t) => {
   const temporary = await mkdtemp(join(tmpdir(), "extella-codex-context-"));
   const argsLog = join(temporary, "codex-args.jsonl");
@@ -231,6 +341,21 @@ test("live bridge creates and resumes an isolated Codex conversation", async (t)
     invokeProvider({
       provider: "codex",
       live: true,
+      accountBinding: BINDING,
+      conversationId: first.conversation_id,
+      executionProfileId: "workspace-read",
+      eventId: "evt_context_other_profile",
+      prompt: "A planned profile must fail closed.",
+      workspace: temporary,
+      stateDir: join(temporary, "state"),
+    }),
+    (error) => error?.code === "execution_profile_unavailable",
+  );
+
+  await assert.rejects(
+    invokeProvider({
+      provider: "codex",
+      live: true,
       accountBinding: "b".repeat(64),
       conversationId: first.conversation_id,
       eventId: "evt_context_other_account",
@@ -272,7 +397,7 @@ test("output-budget failure exposes only safe structured diagnostics", () => {
   assert.equal("stderr" in diagnostic.details, false);
 });
 
-test("global Expert is loopback-only and supports 2000 output tokens", async () => {
+test("global Expert is loopback-only and supports reviewed profiles", async () => {
   const expert = await readFile(
     join(ROOT, "experts", "extella_codex_account_bridge_v2.fython"),
     "utf8",
@@ -281,7 +406,11 @@ test("global Expert is loopback-only and supports 2000 output tokens", async () 
   assert.match(expert, /max_output_tokens: int = 2000/);
   assert.match(expert, /max_output_tokens > 2000/);
   assert.match(expert, /conversation_id: str = ""/);
-  assert.match(expert, /"schema_version": "1\.2"/);
+  assert.match(expert, /execution_profile_id: str = "answer-only"/);
+  assert.match(expert, /"schema_version": "1\.3"/);
+  assert.match(expert, /"execution_profile_id": execution_profile_id/);
+  assert.match(expert, /"workspace-read"/);
+  assert.match(expert, /"web-research"/);
   assert.match(expert, /urllib\.error\.HTTPError/);
   assert.doesNotMatch(expert, /https?:\/\/(?!127\.0\.0\.1)/);
 });
@@ -335,8 +464,13 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.2\.1'/);
-  assert.doesNotMatch(source, /0\.2\.0/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.0'/);
+  assert.match(source, /var EXECUTION_POLICY_VERSION = '1\.0'/);
+  assert.match(source, /var DEFAULT_EXECUTION_PROFILE_ID = 'answer-only'/);
+  assert.match(source, /return ETB\.api\.resolveAccountScope\(\)/);
+  assert.doesNotMatch(source, /QWEN_SETUP_SCOPE/);
+  assert.doesNotMatch(source, /agent_extella_alibaba_default/);
+  assert.doesNotMatch(source, /0\.2\.1/);
 });
 
 test("standalone Expert matches the code embedded in the desktop adapter", async () => {
@@ -366,11 +500,14 @@ test("REST deployment uses the same persistent-context routing rule", async () =
     join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
     "utf8",
   );
-  assert.equal(RULE_MARKER, "EXTELLA_CODEX_ROUTING_V3");
+  assert.equal(RULE_MARKER, "EXTELLA_CODEX_ROUTING_V4");
   assert.match(RULE_TEXT, /Codex mode as active/);
   assert.match(RULE_TEXT, /every later user message/);
   assert.match(RULE_TEXT, /deactivate the mode/);
   assert.match(RULE_TEXT, /never summarize or truncate/);
+  assert.match(RULE_TEXT, /execution_profile_id="answer-only"/);
+  assert.match(RULE_TEXT, /must always keep its original execution_profile_id/);
+  assert.match(RULE_TEXT, /Never pass raw runtime/);
   assert.match(
     installer,
     new RegExp(`ROUTING_RULE_MARKER = '${RULE_MARKER}'`),
