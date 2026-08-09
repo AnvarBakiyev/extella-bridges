@@ -9,8 +9,10 @@ import test from "node:test";
 import { scrubCredentialEnvironment } from "../scripts/bridge-entry.mjs";
 import { createBridgeServer, signRequest } from "../scripts/bridge-core.mjs";
 import {
+  RUNTIME_SCRIPT_FILES,
   deriveAccountBinding,
   existingConfiguredPort,
+  writeRuntime,
 } from "../scripts/configure-bridge-macos.mjs";
 import {
   RULE_MARKER,
@@ -202,6 +204,33 @@ test("bridge updates preserve the port from the existing LaunchAgent", async (t)
     "utf8",
   );
   assert.equal(await existingConfiguredPort(plistPath), 18787);
+});
+
+test("installed runtime includes every local module dependency", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "extella-runtime-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const runtimeDir = join(directory, "runtime");
+  await writeRuntime(runtimeDir);
+
+  const bundled = new Set(RUNTIME_SCRIPT_FILES);
+  for (const filename of bundled) {
+    const source = await readFile(join(ROOT, "scripts", filename), "utf8");
+    assert.equal(
+      await readFile(join(runtimeDir, "scripts", filename), "utf8"),
+      source,
+      filename,
+    );
+    const localImports = source.matchAll(
+      /(?:from\s+|import\()\s*["']\.\/([^"']+)["']/g,
+    );
+    for (const match of localImports) {
+      assert.ok(
+        bundled.has(match[1]),
+        `${filename} imports ${match[1]}, which is absent from the runtime bundle`,
+      );
+    }
+  }
+  assert.ok(bundled.has("execution-profiles.mjs"));
 });
 
 test("account-wide schema 1.2 accepts a bounded conversation ID", async (t) => {
@@ -476,7 +505,7 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.0'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.1'/);
   assert.match(source, /var EXECUTION_POLICY_VERSION = '1\.0'/);
   assert.match(source, /var DEFAULT_EXECUTION_PROFILE_ID = 'answer-only'/);
   assert.match(source, /return ETB\.api\.resolveAccountScope\(\)/);
