@@ -10,7 +10,7 @@ ETB.codexAccountBridge = (function () {
   // records by name, so reusing the legacy `extella_codex_bridge` can make a
   // local record shadow an account-global save in another agent scope.
   var NAME = 'extella_codex_account_bridge_v2';
-  var SHA256 = 'a40e46baa48bc8ed082ee292ab1caab2c02df45b48080e60b324a9c20cd0f2b8';
+  var SHA256 = '5c7db1225d224d4cfedccb12198a663c53b931794bef11423ee5a6cc823f85da';
   var CODE = [
     "$extens(\"include.py\")",
     "include(\"import os\", [])",
@@ -26,6 +26,7 @@ ETB.codexAccountBridge = (function () {
     "def extella_codex_account_bridge_v2(",
     "    prompt: str = \"\",",
     "    conversation_id: str = \"\",",
+    "    execution_profile_id: str = \"answer-only\",",
     "    max_output_tokens: int = 2000,",
     "    timeout_ms: int = 120000",
     ") -> dict:",
@@ -77,6 +78,17 @@ ETB.codexAccountBridge = (function () {
     "        any(not (character.isalnum() or character in \"_-\") for character in conversation_suffix)",
     "    ):",
     "        return {\"status\": \"error\", \"message\": \"conversation_id is invalid\"}",
+    "    known_execution_profiles = (",
+    "        \"answer-only\",",
+    "        \"workspace-read\",",
+    "        \"web-research\"",
+    "    )",
+    "    if execution_profile_id not in known_execution_profiles:",
+    "        return {",
+    "            \"status\": \"error\",",
+    "            \"code\": \"execution_profile_unknown\",",
+    "            \"message\": \"Execution profile is not recognized\"",
+    "        }",
     "    if max_output_tokens < 1 or max_output_tokens > 2000:",
     "        return {\"status\": \"error\", \"message\": \"max_output_tokens must be 1..2000\"}",
     "    if timeout_ms < 1000 or timeout_ms > 120000:",
@@ -99,11 +111,12 @@ ETB.codexAccountBridge = (function () {
     "    token = \"\"",
     "    event_id = \"evt_\" + uuid.uuid4().hex",
     "    body = {",
-    "        \"schema_version\": \"1.2\",",
+    "        \"schema_version\": \"1.3\",",
     "        \"event_id\": event_id,",
     "        \"account_binding\": account_binding,",
     "        \"capability\": \"general-assistance\",",
     "        \"provider\": \"codex\",",
+    "        \"execution_profile_id\": execution_profile_id,",
     "        \"prompt\": prompt,",
     "        \"budget\": {",
     "            \"max_output_tokens\": max_output_tokens,",
@@ -184,10 +197,11 @@ ETB.codexAccountBridge = (function () {
     name: NAME,
     sha256: SHA256,
     code: CODE,
-    description: 'Delegate a bounded text task to local Codex and resume an isolated conversation for the current Extella chat.',
+    description: 'Delegate a bounded text task to local Codex under a reviewed execution profile and resume an isolated conversation for the current Extella chat.',
     kwargs: {
       prompt: '',
       conversation_id: '',
+      execution_profile_id: 'answer-only',
       max_output_tokens: 2000,
       timeout_ms: 120000
     }
