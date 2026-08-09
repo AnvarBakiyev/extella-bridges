@@ -491,6 +491,35 @@ test("MCP configuration uses environment references and contains no tokens", asy
   assert.doesNotMatch(source, /Bearer\s+[A-Za-z0-9._-]+/);
 });
 
+test("plugin manifest, package, installer, and documented tag share one version", async () => {
+  const [pluginManifestSource, packageSource, installerSource, readme] =
+    await Promise.all([
+      readFile(join(ROOT, ".codex-plugin", "plugin.json"), "utf8"),
+      readFile(join(ROOT, "package.json"), "utf8"),
+      readFile(
+        join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+        "utf8",
+      ),
+      readFile(resolve(ROOT, "..", "..", "README.md"), "utf8"),
+    ]);
+  const pluginVersion = JSON.parse(pluginManifestSource).version;
+  const packageVersion = JSON.parse(packageSource).version;
+  const installerVersion = installerSource.match(
+    /var PLUGIN_VERSION = '([^']+)'/,
+  )?.[1];
+  const builderVersion = installerSource.match(
+    /BUILDER_REF = "v([^"]+)"/,
+  )?.[1];
+  const documentedVersion = readme.match(
+    /extella-codex-bridge --ref v([^\s]+)/,
+  )?.[1];
+
+  assert.equal(pluginVersion, packageVersion);
+  assert.equal(installerVersion, pluginVersion);
+  assert.equal(builderVersion, pluginVersion);
+  assert.equal(documentedVersion, pluginVersion);
+});
+
 test("Extella Desktop installer pins hashes for every embedded Expert", async () => {
   const source = await readFile(
     join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
@@ -516,7 +545,13 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.2'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.3'/);
+  assert.match(source, /installed, plugin_path = installed_plugin\(\)/);
+  assert.match(source, /plugin_version_mismatch/);
+  assert.match(
+    source,
+    /verified = subprocess\.run\(\[codex, "plugin", "list", "--json"\]/,
+  );
   assert.match(
     source,
     /Independent agent-building standards contract; do not advance with bridge-only releases/,
