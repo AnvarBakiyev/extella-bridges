@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
 import {
   RULE_MARKER,
   RULE_TEXT,
+  accountScopeFromAgentList,
   expertCode,
 } from "../scripts/deploy-extella-assets.mjs";
 import {
@@ -29,6 +30,17 @@ import {
 const ROOT = resolve(import.meta.dirname, "..");
 const SECRET = "test-secret-with-at-least-thirty-two-bytes";
 const BINDING = "a".repeat(64);
+
+async function filesUnder(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const path = join(directory, entry.name);
+      return entry.isDirectory() ? filesUnder(path) : [path];
+    }),
+  );
+  return nested.flat();
+}
 
 function body(overrides = {}) {
   return {
@@ -471,6 +483,48 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
   assert.doesNotMatch(source, /QWEN_SETUP_SCOPE/);
   assert.doesNotMatch(source, /agent_extella_alibaba_default/);
   assert.doesNotMatch(source, /0\.2\.1/);
+});
+
+test("all deployment scripts resolve storage scope from the current account", async () => {
+  const scriptsDir = join(ROOT, "scripts");
+  const paths = await filesUnder(scriptsDir);
+  const sources = await Promise.all(
+    paths.map(async (path) => ({
+      name: path.slice(scriptsDir.length + 1),
+      source: await readFile(path, "utf8"),
+    })),
+  );
+  assert.ok(sources.length > 0);
+  for (const { name, source } of sources) {
+    assert.doesNotMatch(
+      source,
+      /agent_extella_alibaba_default/,
+      `${name} must not contain a foreign platform agent id`,
+    );
+  }
+  const deploy = sources.find(({ name }) => name === "deploy-extella-assets.mjs");
+  assert.match(deploy?.source ?? "", /postJson\(\s*"\/api\/agent\/list"/);
+  assert.match(deploy?.source ?? "", /BOOTSTRAP_AGENT_SCOPE/);
+  assert.match(
+    deploy?.source ?? "",
+    /const accountScope = await resolveAccountScope\(token\)/,
+  );
+});
+
+test("REST deployment selects only a scope returned by the current account", () => {
+  const payload = {
+    content: {
+      agents: [
+        { id: "agent_other", provider: "openai", name: "Other" },
+        { agent_id: "agent_account_qwen", provider: "alibaba", name: "Qwen" },
+      ],
+    },
+  };
+  assert.equal(accountScopeFromAgentList(payload), "agent_account_qwen");
+  assert.throws(
+    () => accountScopeFromAgentList({ agents: [] }),
+    (error) => error?.code === "account_scope_unavailable",
+  );
 });
 
 test("standalone Expert matches the code embedded in the desktop adapter", async () => {

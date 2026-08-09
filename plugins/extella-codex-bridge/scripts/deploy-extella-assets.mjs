@@ -11,7 +11,10 @@ const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
 const BASE_URL = "https://api.extella.ai";
-const AGENT_ID = "agent_extella_alibaba_default";
+// Extella requires X-Agent-Id even for the request that discovers the current
+// account's agents. The bootstrap value is deliberately not a real agent id;
+// it must never be used for scoped writes.
+const BOOTSTRAP_AGENT_SCOPE = "agent_XXXXXXXX";
 const EXPERT_NAME = "extella_codex_account_bridge_v2";
 const RULE_MARKER = "EXTELLA_CODEX_ROUTING_V4";
 const RULE_TEXT =
@@ -50,14 +53,17 @@ async function launchEnvironment(name) {
   return result.stdout.trim();
 }
 
-async function postJson(path, body, token) {
+async function postJson(path, body, token, agentId) {
+  if (typeof agentId !== "string" || !agentId.trim()) {
+    throw new Error(`${path} requires an explicit Extella account scope`);
+  }
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Auth-Token": token,
       "X-Profile-Id": "default",
-      "X-Agent-Id": AGENT_ID,
+      "X-Agent-Id": agentId,
     },
     body: JSON.stringify(body),
   });
@@ -76,6 +82,54 @@ async function postJson(path, body, token) {
     );
   }
   return payload;
+}
+
+function agentRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload.agents)) return payload.agents;
+  for (const key of ["content", "data", "result"]) {
+    const rows = agentRows(payload[key]);
+    if (rows.length) return rows;
+  }
+  for (const key of ["results", "items"]) {
+    if (Array.isArray(payload[key])) return payload[key];
+  }
+  return [];
+}
+
+function accountScopeFromAgentList(payload) {
+  const groups = [[], [], [], []];
+  for (const agent of agentRows(payload)) {
+    const id = String(agent?.id ?? agent?.agent_id ?? "").trim();
+    if (!id) continue;
+    const provider = String(agent?.provider ?? "").toLowerCase();
+    const name = String(agent?.name ?? "");
+    if (provider === "alibaba" && name.includes("NEW")) groups[0].push(id);
+    else if (provider === "alibaba" && !name.includes("DEFAULT")) {
+      groups[1].push(id);
+    } else if (provider === "alibaba") groups[2].push(id);
+    else groups[3].push(id);
+  }
+  const scope = groups.flat()[0] ?? "";
+  if (!scope) {
+    const error = new Error(
+      "No Extella storage scope is available for the current account",
+    );
+    error.code = "account_scope_unavailable";
+    throw error;
+  }
+  return scope;
+}
+
+async function resolveAccountScope(token) {
+  const listedAgents = await postJson(
+    "/api/agent/list",
+    {},
+    token,
+    BOOTSTRAP_AGENT_SCOPE,
+  );
+  return accountScopeFromAgentList(listedAgents);
 }
 
 function expertCode(payload) {
@@ -123,6 +177,7 @@ async function main() {
   if (token.length < 8) {
     throw new Error("EXTELLA_API_TOKEN is unavailable in launchctl");
   }
+  const accountScope = await resolveAccountScope(token);
   const code = (
     await readFile(
       resolve(PLUGIN_DIR, "experts", `${EXPERT_NAME}.fython`),
@@ -150,11 +205,13 @@ async function main() {
       },
     },
     token,
+    accountScope,
   );
   const savedExpert = await postJson(
     "/api/expert/get",
     { name: EXPERT_NAME, global: true },
     token,
+    accountScope,
   );
   const storedCode = expertCode(savedExpert);
   if (sha256(storedCode) !== codeHash) {
@@ -170,6 +227,7 @@ async function main() {
     "/api/rules/list",
     { global: true },
     token,
+    accountScope,
   );
   const existing = ruleRows(listedRules).find((row) =>
     ruleText(row).startsWith(`${RULE_MARKER}:`),
@@ -179,18 +237,21 @@ async function main() {
       "/api/rules/update",
       { rule_id: String(ruleId(existing)), rule: RULE_TEXT },
       token,
+      accountScope,
     );
   } else if (!existing) {
     await postJson(
       "/api/rules/add",
       { rule: RULE_TEXT, global: true },
       token,
+      accountScope,
     );
   }
   const verifiedRules = await postJson(
     "/api/rules/list",
     { global: true },
     token,
+    accountScope,
   );
   if (!ruleRows(verifiedRules).some((row) => ruleText(row) === RULE_TEXT)) {
     throw new Error("Routing rule verification failed after save");
@@ -203,6 +264,7 @@ async function main() {
         expert: EXPERT_NAME,
         expert_sha256: codeHash,
         routing_rule: RULE_MARKER,
+        account_scope: accountScope,
         global: true,
         model_called: false,
       },
@@ -225,6 +287,8 @@ if (
 export {
   RULE_MARKER,
   RULE_TEXT,
+  accountScopeFromAgentList,
+  agentRows,
   expertCode,
   main,
   ruleId,
