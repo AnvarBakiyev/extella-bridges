@@ -6,18 +6,19 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = '085c994fb2d2db327e6d3a8084530fde06f60b5750e96c0cdb97508c75f7317b';
+  var EXPERT_SHA256 = '0880630038af4eb194e5ec42f9d38e67f0c6d03089d3e2aa9860662f5f1abb55';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '445d111131ef27784d39fe5a665cd86f209a6624984beb6431f19c5af36abbc5';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
-  var INSTALL_EXPERT_SHA256 = '349a98190520283f340300f66b11a72edd994b4c7e8ae5dbe095c9c697e22cd8';
+  var INSTALL_EXPERT_SHA256 = '7c91909535357f8ea8212dd48796eecba2032dff6050ba444cef612dc398cc62';
   var CREDENTIALS_EXPERT_NAME = 'extella_codex_credentials_v1';
   var CREDENTIALS_EXPERT_SHA256 = 'cd3d10475328dd915aa6504642f366c7d891846fb9450c237bd3ffcbd49dc586';
   var BRIDGE_EXPERT_NAME = 'extella_codex_bridge_setup_v1';
-  var BRIDGE_EXPERT_SHA256 = '0a15232b51fd8128f02ac13b7638f647e02156931e9b2e825222d037359bf180';
+  var BRIDGE_EXPERT_SHA256 = '53bb7932da4ad9948526530a1ef2276d309d7dfe09eb23e9de4eb55f62832eaa';
   var VERIFY_EXPERT_NAME = 'extella_codex_verify_v1';
-  var VERIFY_EXPERT_SHA256 = 'ea58e115517c10160786b0ec3672a0b1827e51bd494699c377f60aef646a0f34';
-  var PLUGIN_VERSION = '0.3.1';
+  var VERIFY_EXPERT_SHA256 = '8a42831fbfe00bb12c8244548cf64c3299a57787332be5a5577b630dca81e338';
+  var PLUGIN_VERSION = '0.3.2';
+  // Independent agent-building standards contract; do not advance with bridge-only releases.
   var STANDARDS_REF = 'v0.3.0';
   var STATE_KEY = 'extella:codex-connection:v2';
   var EXECUTION_POLICY_VERSION = '1.0';
@@ -57,7 +58,8 @@ ETB.codexInstaller = (function () {
     'def _etb_codex_setup_v2(step="preflight") -> str:',
     '    import json, os, platform, secrets, shutil, subprocess, urllib.request',
     '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-codex-bridge.git"',
-    '    BUILDER_REF = "v0.3.1"',
+    '    BUILDER_REF = "v0.3.2"',
+    '    # Independent agent-building standards contract; do not advance with bridge-only releases.',
     '    STANDARDS_REF = "v0.3.0"',
     '    MARKETPLACE = "extella-codex"',
     '    PLUGIN = "extella-codex-bridge@extella-codex"',
@@ -205,7 +207,7 @@ ETB.codexInstaller = (function () {
     '            return result("error", "plugin_install_failed",',
     '                "Не удалось установить Extella Codex Bridge. Можно безопасно повторить.")',
     '        return result("success", "plugin_installed",',
-    '            "Extella Codex Bridge установлен.", plugin_version="0.3.1")',
+    '            "Extella Codex Bridge установлен.", plugin_version="0.3.2")',
     '',
     '    if step == "credentials":',
     '        token = current_token()',
@@ -290,7 +292,7 @@ ETB.codexInstaller = (function () {
     '            return result("error", "verification_failed",',
     '                "Не удалось проверить итоговую конфигурацию Codex.")',
     '        return result("success", "ready", "Codex подключён к Extella.",',
-    '            plugin_version="0.3.1", restart_required=False,',
+    '            plugin_version="0.3.2", restart_required=False,',
     '            live_enabled=True, authorization_scope="account",',
     '            execution_policy_version=health.get("execution_policy_version"),',
     '            default_execution_profile_id=health.get("default_execution_profile_id"),',
@@ -365,13 +367,13 @@ ETB.codexInstaller = (function () {
     '        removed = subprocess.run([codex, "plugin", "marketplace", "remove", "extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90, env=env, shell=False)',
     '        if removed.returncode != 0:',
     '            return json.dumps({"status": "error", "code": "marketplace_remove_failed", "message": "Codex could not refresh the Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
-    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.3.1", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
+    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.3.2", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if added.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
     '    installed = subprocess.run([codex, "plugin", "add", "extella-codex-bridge@extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if installed.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "plugin_install_failed", "message": "Codex could not install Extella Codex Bridge.", "model_called": False, "agent_called": False, "paid": False})',
-    '    return json.dumps({"status": "success", "code": "plugin_installed", "message": "Extella Codex Bridge is installed.", "plugin_version": "0.3.1", "model_called": False, "agent_called": False, "paid": False})'
+    '    return json.dumps({"status": "success", "code": "plugin_installed", "message": "Extella Codex Bridge is installed.", "plugin_version": "0.3.2", "model_called": False, "agent_called": False, "paid": False})'
   ].join('\n');
 
   // This performs the local, secret-preserving preparation needed by the
@@ -440,7 +442,7 @@ ETB.codexInstaller = (function () {
     '        return json.dumps({"status": "error", "code": "plugin_list_failed", "message": "Codex could not inspect installed plugins.", "model_called": False, "agent_called": False, "paid": False})',
     '    try:',
     '        installed = json.loads(listing.stdout or "{}").get("installed", [])',
-    '        matches = [item for item in installed if item.get("pluginId") == "extella-codex-bridge@extella-codex" and item.get("installed") is True and item.get("enabled") is True and item.get("version") == "0.3.1"]',
+    '        matches = [item for item in installed if item.get("pluginId") == "extella-codex-bridge@extella-codex" and item.get("installed") is True and item.get("enabled") is True and item.get("version") == "0.3.2"]',
     '        plugin_path = str((matches[0].get("source") or {}).get("path") or "") if matches else ""',
     '    except Exception:',
     '        plugin_path = ""',
@@ -492,7 +494,7 @@ ETB.codexInstaller = (function () {
     '    answer_only = [item for item in profiles if item.get("id") == "answer-only" and item.get("status") == "available"]',
     '    if health.get("status") != "ok" or health.get("live_enabled") is not True or "codex" not in health.get("providers", []) or "account" not in health.get("authorization_scopes", []) or health.get("execution_policy_version") != "1.0" or health.get("default_execution_profile_id") != "answer-only" or not answer_only:',
     '        return json.dumps({"status": "error", "code": "bridge_verification_failed", "message": "The local Codex bridge did not confirm account-wide live mode.", "model_called": False, "agent_called": False, "paid": False})',
-    '    return json.dumps({"status": "success", "code": "ready", "message": "Codex is connected to Extella.", "plugin_version": "0.3.1", "restart_required": False, "live_enabled": True, "authorization_scope": "account", "execution_policy_version": health.get("execution_policy_version"), "default_execution_profile_id": health.get("default_execution_profile_id"), "execution_profiles": profiles, "model_called": False, "agent_called": False, "paid": False})'
+    '    return json.dumps({"status": "success", "code": "ready", "message": "Codex is connected to Extella.", "plugin_version": "0.3.2", "restart_required": False, "live_enabled": True, "authorization_scope": "account", "execution_policy_version": health.get("execution_policy_version"), "default_execution_profile_id": health.get("default_execution_profile_id"), "execution_profiles": profiles, "model_called": False, "agent_called": False, "paid": False})'
   ].join('\n');
 
   function metadata() {

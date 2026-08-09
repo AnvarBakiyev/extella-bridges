@@ -456,6 +456,17 @@ test("global Expert is loopback-only and supports reviewed profiles", async () =
   assert.doesNotMatch(expert, /https?:\/\/(?!127\.0\.0\.1)/);
 });
 
+test("global Expert returns strict JSON on every external result path", async () => {
+  const expert = await readFile(
+    join(ROOT, "experts", "extella_codex_account_bridge_v2.fython"),
+    "utf8",
+  );
+  assert.match(expert, /\) -> str:/);
+  assert.match(expert, /def strict_json\(payload\):/);
+  assert.match(expert, /return strict_json\(result\)/);
+  assert.doesNotMatch(expert, /^\s+return\s+(?:result|\{)/m);
+});
+
 test("global Expert prefers active launchd bridge transport settings", async () => {
   const expert = await readFile(
     join(ROOT, "experts", "extella_codex_account_bridge_v2.fython"),
@@ -505,7 +516,11 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.1'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.2'/);
+  assert.match(
+    source,
+    /Independent agent-building standards contract; do not advance with bridge-only releases/,
+  );
   assert.match(source, /var EXECUTION_POLICY_VERSION = '1\.0'/);
   assert.match(source, /var DEFAULT_EXECUTION_PROFILE_ID = 'answer-only'/);
   assert.match(source, /return ETB\.api\.resolveAccountScope\(\)/);
