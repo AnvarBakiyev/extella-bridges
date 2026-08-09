@@ -19,6 +19,13 @@ const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
 const LABEL = "ai.extella.codex-bridge";
+const RUNTIME_SCRIPT_FILES = [
+  "bridge-entry.mjs",
+  "bridge-core.mjs",
+  "bridge-server.mjs",
+  "execution-profiles.mjs",
+  "invoke-provider.mjs",
+];
 const SCRUB_BEFORE_NODE = [
   "EXTELLA_API_TOKEN",
   "EXTELLA_SECONDARY_API_TOKEN",
@@ -227,12 +234,7 @@ async function existingConfiguredPort(plistPath) {
 async function writeRuntime(runtimeDir) {
   await mkdir(join(runtimeDir, "scripts"), { recursive: true, mode: 0o700 });
   await mkdir(join(runtimeDir, "schemas"), { recursive: true, mode: 0o700 });
-  for (const filename of [
-    "bridge-entry.mjs",
-    "bridge-core.mjs",
-    "bridge-server.mjs",
-    "invoke-provider.mjs",
-  ]) {
+  for (const filename of RUNTIME_SCRIPT_FILES) {
     await copyFile(
       join(PLUGIN_DIR, "scripts", filename),
       join(runtimeDir, "scripts", filename),
@@ -525,6 +527,7 @@ if (
 }
 
 export {
+  RUNTIME_SCRIPT_FILES,
   SCRUB_BEFORE_NODE,
   assertPortAvailable,
   deriveAccountBinding,
@@ -534,5 +537,6 @@ export {
   plist,
   validateOptions,
   waitForHealth,
+  writeRuntime,
   xml,
 };
