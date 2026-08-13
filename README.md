@@ -7,6 +7,20 @@ A standalone, open-source integration that connects Codex and Extella in both di
 
 The repository is the canonical home for the bridge runtime, the account-wide Extella Expert, the Codex plugin, and the Extella Desktop button integration.
 
+## One public Extella guide
+
+The development guide has one public entry point: the
+[Extella Agent Standards repository](https://github.com/AnvarBakiyev/extella-agent-standards).
+For every real Codex delegation, the local bridge reads that repository's
+`store_app/content.json` and `README.md` from fixed public URLs. It treats both
+as reference data, strips executable HTML, keeps no local text copy, and
+accepts only a strictly newer `версия_содержимого`. Setup, status, and health
+checks do not fetch the guide and do not start a model.
+
+Claude Code can use the same public guide through its Extella MCP connection.
+It is not a fallback model for the Extella-to-Codex bridge: the reverse route
+starts Codex only after the user's explicit request and cost warning.
+
 ```mermaid
 flowchart LR
   C["Codex"] -->|"Extella MCP"| E["Extella API"]

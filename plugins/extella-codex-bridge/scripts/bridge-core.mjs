@@ -76,6 +76,26 @@ const PROVIDER_ERROR_MESSAGES = new Map([
     "codex_configuration_incompatible",
     "The local Codex configuration is incompatible with the bridge",
   ],
+  [
+    "extella_guide_source_unavailable",
+    "The public Extella guide could not be read; Codex was not started",
+  ],
+  [
+    "extella_guide_source_invalid",
+    "The public Extella guide is invalid; Codex was not started",
+  ],
+  [
+    "extella_guide_source_rollback_detected",
+    "The public Extella guide is older than the accepted version; Codex was not started",
+  ],
+  [
+    "extella_guide_source_state_invalid",
+    "The local Extella guide version state is invalid; Codex was not started",
+  ],
+  [
+    "extella_guide_source_state_write_failed",
+    "The Extella guide version could not be recorded; Codex was not started",
+  ],
 ]);
 
 class BridgeError extends Error {

@@ -19,6 +19,7 @@ import {
   EXECUTION_POLICY_VERSION,
   resolveExecutionProfile,
 } from "./execution-profiles.mjs";
+import { GuideSourceError, loadExtellaGuideSource } from "./extella-guide-source.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
@@ -827,6 +828,15 @@ async function invokeProvider(options) {
         stateDir,
       })
     : null;
+  let guide;
+  try {
+    guide = await (options.guideLoader || loadExtellaGuideSource)({ stateDir });
+  } catch (error) {
+    if (error instanceof GuideSourceError) {
+      throw providerFailure(error.code, "extella_guide_source");
+    }
+    throw providerFailure("extella_guide_source_unavailable", "extella_guide_source");
+  }
   await runPreflightWithRetry(
     async () => {
       await verifyChatGptAuth();
@@ -838,7 +848,7 @@ async function invokeProvider(options) {
     executionProfile,
     eventId,
     maxOutputTokens,
-    prompt,
+    prompt: `${guide.context}\n\nUser delegation:\n${prompt}`,
     threadId: existingThreadId,
     timeoutMs,
     workspace,

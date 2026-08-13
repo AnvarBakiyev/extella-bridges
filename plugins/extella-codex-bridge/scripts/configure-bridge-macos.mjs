@@ -24,6 +24,7 @@ const RUNTIME_SCRIPT_FILES = [
   "bridge-core.mjs",
   "bridge-server.mjs",
   "execution-profiles.mjs",
+  "extella-guide-source.mjs",
   "invoke-provider.mjs",
 ];
 const SCRUB_BEFORE_NODE = [
