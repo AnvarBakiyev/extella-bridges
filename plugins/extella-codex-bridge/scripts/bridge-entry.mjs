@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const SENSITIVE_NAME =
   /(API_?KEY|TOKEN|SECRET|PASSWORD|PASSCODE|CREDENTIAL|AUTHORIZATION|COOKIE)/i;
-const REQUIRED_SENSITIVE_NAMES = new Set(["EXTELLA_BRIDGE_SECRET"]);
+// Each bridge service keeps its own secret under its own name, so the scrub
+// has to spare whichever one this service was told to read.
+const REQUIRED_SENSITIVE_NAMES = new Set(
+  [
+    "EXTELLA_BRIDGE_SECRET",
+    process.env.EXTELLA_BRIDGE_SECRET_NAME,
+  ].filter((name) => /^EXTELLA_[A-Z0-9_]{0,48}BRIDGE_SECRET$/.test(name || "")),
+);
 
 function scrubCredentialEnvironment(environment = process.env) {
   const removed = [];

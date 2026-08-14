@@ -1,0 +1,273 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test from "node:test";
+
+import { secretVariableName } from "../scripts/bridge-server.mjs";
+import { SCRUB_BEFORE_NODE as CODEX_SCRUB } from "../scripts/configure-bridge-macos.mjs";
+import {
+  BINDING_VARIABLE,
+  DEFAULT_PORT,
+  LABEL,
+  PORT_VARIABLE,
+  RUNTIME_SCRIPT_FILES,
+  SCRUB_BEFORE_NODE,
+  SECRET_VARIABLE,
+  deriveAccountBinding,
+  existingConfiguredPort,
+  paths,
+  plist,
+  validateOptions,
+  writeRuntime,
+} from "../../extella-claude-bridge/scripts/configure-claude-bridge-macos.mjs";
+
+const CLAUDE_PLUGIN = resolve(import.meta.dirname, "..", "..", "extella-claude-bridge");
+const SECRET = "0".repeat(64);
+const TOKEN = "extella-token-that-must-not-appear-anywhere";
+
+function samplePlist(overrides = {}) {
+  return plist({
+    accountBinding: "a".repeat(64),
+    capability: "general-assistance",
+    claudePath: "/opt/homebrew/bin/claude",
+    logPath: "/tmp/x/bridge.log",
+    nodePath: "/opt/homebrew/bin/node",
+    port: DEFAULT_PORT,
+    runtimeDir: "/tmp/x/runtime",
+    stateDir: "/tmp/x/state",
+    supportDir: "/tmp/x",
+    ...overrides,
+  });
+}
+
+// ── The two services must not be able to disturb each other ────────────────
+
+test("the Claude service shares no label, port, or secret with the Codex one", async () => {
+  // Read rather than imported: the Codex installer keeps its label private,
+  // and this also fails if that label ever changes underneath us.
+  const codexSource = await readFile(
+    resolve(import.meta.dirname, "..", "scripts", "configure-bridge-macos.mjs"),
+    "utf8",
+  );
+  assert.ok(codexSource.includes('const LABEL = "ai.extella.codex-bridge"'));
+  assert.notEqual(LABEL, "ai.extella.codex-bridge");
+  assert.equal(LABEL, "ai.extella.claude-bridge");
+  assert.equal(SECRET_VARIABLE, "EXTELLA_CLAUDE_BRIDGE_SECRET");
+  assert.notEqual(SECRET_VARIABLE, "EXTELLA_BRIDGE_SECRET");
+  assert.notEqual(DEFAULT_PORT, 8787);
+  assert.notEqual(DEFAULT_PORT, 18787);
+  const { supportDir, stateDir } = paths();
+  assert.ok(supportDir.includes("Extella Claude Bridge"));
+  assert.equal(stateDir.includes("Extella Agent Builder"), false);
+});
+
+test("the Claude service scrubs the Codex secret, and vice versa", () => {
+  // Neither service may inherit the other's secret, and the Codex list is
+  // left exactly as it was.
+  assert.ok(SCRUB_BEFORE_NODE.includes("EXTELLA_BRIDGE_SECRET"));
+  assert.equal(SCRUB_BEFORE_NODE.includes(SECRET_VARIABLE), false);
+  assert.equal(CODEX_SCRUB.includes("EXTELLA_BRIDGE_SECRET"), false);
+  for (const name of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "EXTELLA_API_TOKEN"]) {
+    assert.ok(SCRUB_BEFORE_NODE.includes(name), `${name} must be scrubbed`);
+  }
+});
+
+test("the secret variable name is validated, not taken on trust", () => {
+  assert.equal(secretVariableName(undefined), "EXTELLA_BRIDGE_SECRET");
+  assert.equal(secretVariableName(SECRET_VARIABLE), SECRET_VARIABLE);
+  for (const bad of ["PATH", "EXTELLA_BRIDGE_SECRET_EVIL", "../x", ""]) {
+    if (bad === "") continue;
+    assert.throws(() => secretVariableName(bad), `${bad} must be refused`);
+  }
+});
+
+// ── The LaunchAgent file must never carry a secret ─────────────────────────
+
+test("the LaunchAgent names the secret variable and never contains its value", () => {
+  const source = samplePlist();
+  assert.ok(source.includes("<key>EXTELLA_BRIDGE_SECRET_NAME</key>"));
+  assert.ok(source.includes(`<string>${SECRET_VARIABLE}</string>`));
+  assert.equal(source.includes(SECRET), false);
+  assert.equal(source.includes(TOKEN), false);
+  // The scrub runs before node starts, inside ProgramArguments.
+  for (const name of SCRUB_BEFORE_NODE) {
+    assert.ok(source.includes(`<string>${name}</string>`), `${name} must be scrubbed`);
+  }
+  assert.ok(source.includes("<string>mock,claude</string>"));
+  assert.ok(source.includes("<key>EXTELLA_AGENT_BUILDER_LIVE</key>"));
+});
+
+test("the LaunchAgent escapes values instead of trusting them", () => {
+  const source = samplePlist({ supportDir: '/tmp/<evil>&"path"' });
+  assert.equal(source.includes("<evil>"), false);
+  assert.ok(source.includes("&lt;evil&gt;"));
+});
+
+test("an existing installation keeps its port", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "extella-claude-port-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "bridge.plist");
+  await readFile(path).catch(() => {});
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(path, `<key>${PORT_VARIABLE}</key>\n<string>18999</string>\n`, "utf8");
+  assert.equal(await existingConfiguredPort(path), 18999);
+});
+
+// ── Confirmations are not optional ─────────────────────────────────────────
+
+test("setup refuses to proceed without both explicit confirmations", () => {
+  const base = { accountWide: true, capability: "general-assistance" };
+  assert.throws(() => validateOptions({ ...base }), /confirm-account-scope/);
+  assert.throws(
+    () =>
+      validateOptions({
+        ...base,
+        accountScopeConfirmation: "I_UNDERSTAND_ALL_AGENTS",
+      }),
+    /confirm-live-cost/,
+  );
+  assert.throws(
+    () =>
+      validateOptions({
+        capability: "general-assistance",
+        accountScopeConfirmation: "I_UNDERSTAND_ALL_AGENTS",
+        liveCostConfirmation: "I_UNDERSTAND_COST",
+      }),
+    /--account-wide/,
+  );
+  const ok = validateOptions({
+    ...base,
+    accountScopeConfirmation: "I_UNDERSTAND_ALL_AGENTS",
+    liveCostConfirmation: "I_UNDERSTAND_COST",
+  });
+  assert.equal(ok.port, DEFAULT_PORT);
+});
+
+test("the account binding is derived and carries no token", () => {
+  const first = deriveAccountBinding(SECRET, TOKEN);
+  assert.equal(first, deriveAccountBinding(SECRET, TOKEN));
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.equal(first.includes("extella-token"), false);
+  assert.notEqual(first, deriveAccountBinding("1".repeat(64), TOKEN));
+  assert.throws(() => deriveAccountBinding(SECRET, "short"));
+});
+
+// ── The installed runtime must be complete ─────────────────────────────────
+
+test("the installed Claude runtime carries every module it imports", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "extella-claude-runtime-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const runtimeDir = join(directory, "runtime");
+  await writeRuntime(runtimeDir);
+  const installed = await readdir(join(runtimeDir, "scripts"));
+  const bundled = new Set(RUNTIME_SCRIPT_FILES);
+  assert.deepEqual(installed.sort(), [...bundled].sort());
+  for (const filename of bundled) {
+    const source = await readFile(join(runtimeDir, "scripts", filename), "utf8");
+    for (const match of source.matchAll(/(?:from\s+|import\()\s*["']\.\/([^"']+)["']/g)) {
+      assert.ok(
+        bundled.has(match[1]),
+        `${filename} imports ${match[1]}, which is absent from the runtime bundle`,
+      );
+    }
+  }
+  assert.ok(bundled.has("adapter-claude.mjs"));
+});
+
+// ── The setup Expert ───────────────────────────────────────────────────────
+
+const EXPERT_PATH = join(CLAUDE_PLUGIN, "experts", "extella_claude_product_setup.py");
+const STEPS = ["preflight", "install", "credentials", "bridge", "verify"];
+
+test("the setup Expert implements exactly the five agreed steps", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  for (const step of STEPS) {
+    assert.ok(source.includes(`action == "${step}"`), `${step} must be handled`);
+  }
+  assert.ok(source.includes('"unsupported_step"'));
+});
+
+test("every Expert result is a JSON string and carries the cost contract", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // H17: a returned dict reaches the page as a Python repr, not JSON.
+  assert.match(source, /return json\.dumps\(payload, ensure_ascii=False\)/);
+  assert.doesNotMatch(source, /^\s+return \{/m);
+  for (const field of ['"model_called": False', '"agent_called": False', '"paid": False']) {
+    assert.ok(source.includes(field), `${field} must be in every result`);
+  }
+  // Every return in the body goes through result(...) or the payload builder.
+  for (const line of source.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("return ")) continue;
+    assert.ok(
+      /^return (result\(|json\.dumps\(|None|"" |""$|\(|agent_id|payload)/.test(trimmed) ||
+        trimmed.startsWith("return (probe.stdout") ||
+        trimmed.startsWith("return \"acct_\"") ||
+        trimmed.startsWith("return value") ||
+        trimmed.startsWith("return found") ||
+        trimmed.startsWith("return candidate") ||
+        trimmed.startsWith("return env") ||
+        trimmed.startsWith("return subprocess.run"),
+      `unexpected return shape: ${trimmed}`,
+    );
+  }
+});
+
+test("the Expert never signs in for the owner and never starts an agent", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // The remedy must be named to the owner, but never executed for them.
+  assert.equal(source.includes('"auth", "login"'), false);
+  assert.equal(source.includes('"login"'), false);
+  assert.ok(source.includes("claude_auth_required"));
+  assert.ok(source.includes("claude auth login"), "the remedy must be named to the owner");
+  assert.equal(source.includes("run_agent"), false);
+  // Subprocesses are launched without a shell and with a scrubbed environment.
+  assert.match(source, /shell=False/);
+  assert.equal(source.includes("shell=True"), false);
+  for (const name of ["EXTELLA_API_TOKEN", "ANTHROPIC_API_KEY", "EXTELLA_CLAUDE_BRIDGE_SECRET"]) {
+    assert.ok(source.includes(`"${name}"`), `${name} must be popped from the child env`);
+  }
+});
+
+test("verification proves the binding by token validation, not by MCP connectivity", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  assert.ok(source.includes("api/token/validate"));
+  assert.ok(source.includes('account_binding_proved_by="token_validate"'));
+  // Measured: `claude mcp list` prints a connected label for a server with no
+  // token at all. The Expert may check presence, but must never branch on it.
+  // Comments are stripped first: prose explaining the trap is not the trap.
+  const code = source
+    .split("\n")
+    .map((line) => line.replace(/#.*$/, ""))
+    .join("\n");
+  assert.doesNotMatch(code, /Connected/);
+  assert.ok(source.includes("mcp_connection_missing"));
+});
+
+test("the MCP connector is written as a helper, never as a literal header", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  assert.ok(source.includes("headersHelper"));
+  assert.equal(source.includes('"headers"'), false);
+  assert.equal(source.includes("--header"), false);
+  // The token file and the helper are created with restrictive modes.
+  assert.ok(source.includes("0o600"));
+  assert.ok(source.includes("0o700"));
+  // All three Extella headers, with a resolved agent id.
+  for (const header of ["X-Auth-Token", "X-Profile-Id", "X-Agent-Id"]) {
+    assert.ok(source.includes(header), `${header} must be sent`);
+  }
+  assert.equal(source.includes("agent_extella_default"), false);
+});
+
+test("the setup Expert calls no model on any step", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // The only Claude invocations are version, auth status, plugin, and mcp
+  // management. None of them runs the model.
+  const invocations = [...source.matchAll(/\[claude,\s*"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(
+    [...new Set(invocations)].sort(),
+    ["--version", "auth", "mcp", "plugin"],
+  );
+  assert.equal(source.includes('"-p"'), false);
+});
