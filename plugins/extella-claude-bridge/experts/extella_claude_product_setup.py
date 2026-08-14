@@ -83,6 +83,36 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         except Exception:
             return None
 
+    # Measured 2026-08-14 against Claude Code 2.1.81: `plugin list --json`
+    # returns a bare JSON array whose entries carry id, version, scope,
+    # enabled, installPath, installedAt, lastUpdated — and no "name" key at
+    # all. Identity is the id, formatted "<plugin>@<marketplace>". An earlier
+    # version of this function matched on "name" and therefore reported every
+    # successful installation as unverified. The dict shapes are kept as a
+    # tolerant fallback, not as the expectation.
+    def installed_plugin(completed):
+        if not completed or completed.returncode != 0:
+            return None
+        try:
+            payload = json.loads(completed.stdout or "[]")
+        except Exception:
+            return None
+        rows = payload if isinstance(payload, list) else (
+            payload.get("plugins") or payload.get("installed") or [])
+        for item in rows:
+            if isinstance(item, dict) and item.get("id") == PLUGIN and item.get("enabled") is True:
+                return item
+        return None
+
+    def marketplace_rows(completed):
+        try:
+            payload = json.loads((completed.stdout if completed else "") or "[]")
+        except Exception:
+            return []
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        return payload.get("marketplaces") or []
+
     def handle_for(value):
         import hashlib
         digest = hashlib.sha256(("extella-mcp-account-v1." + value).encode("utf-8")).hexdigest()
@@ -122,10 +152,11 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                           "Не указан проверенный источник плагина Claude.")
         listing = run([claude, "plugin", "marketplace", "list", "--json"], timeout=45)
         if listing and listing.returncode == 0:
-            try:
-                existing = json.loads(listing.stdout or "{}").get("marketplaces", [])
-            except Exception:
-                existing = []
+            # Measured 2026-08-14: this command also returns a bare JSON array.
+            # Its entries do carry "name" — unlike plugin list, which has no
+            # such key. Reading it as {"marketplaces": [...]} raised on the
+            # list and was swallowed, so an existing source was never refreshed.
+            existing = marketplace_rows(listing)
             if any(item.get("name") == MARKETPLACE for item in existing):
                 run([claude, "plugin", "marketplace", "remove", MARKETPLACE], timeout=90)
         added = run([claude, "plugin", "marketplace", "add", source, "--scope", "user"], timeout=180)
@@ -135,15 +166,14 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         if not installed or installed.returncode != 0:
             return result("error", "plugin_install_failed", "Claude Code не смог установить плагин Extella.")
         verified = run([claude, "plugin", "list", "--json"], timeout=60)
-        try:
-            rows = json.loads((verified.stdout if verified else "") or "{}")
-            rows = rows if isinstance(rows, list) else rows.get("plugins", rows.get("installed", []))
-            present = any(str(item.get("name", "")) == "extella-claude-bridge" for item in rows)
-        except Exception:
-            present = False
-        if not present:
+        entry = installed_plugin(verified)
+        if not entry:
             return result("error", "plugin_verification_failed", "Claude Code не подтвердил установленный плагин Extella.")
-        return result("success", "plugin_installed", "Плагин Extella установлен в Claude Code.")
+        # `version` is a commit SHA for a git-sourced plugin, so it is reported
+        # rather than compared against a semantic version.
+        return result("success", "plugin_installed", "Плагин Extella установлен в Claude Code.",
+                      plugin_id=entry.get("id"), plugin_version=str(entry.get("version", ""))[:64],
+                      plugin_scope=entry.get("scope"))
 
     if action == "credentials":
         token = token_from_disk()
@@ -233,15 +263,41 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                 health.get("default_execution_profile_id") != "answer-only"):
             return result("error", "bridge_verification_failed", "Локальный мост Claude не подтвердил режим account-wide.")
         listed = run([claude, "mcp", "list"], timeout=60)
-        # Presence only. "Connected" in this output is not evidence of
+        # Presence only. The connected label in this output is not evidence of
         # authentication; the binding above is what proves the account.
         if not listed or ("extella_" + handle) not in (listed.stdout or ""):
             return result("error", "mcp_connection_missing", "Соединение Extella MCP не найдено в Claude Code.")
+        if not installed_plugin(run([claude, "plugin", "list", "--json"], timeout=60)):
+            return result("error", "plugin_verification_failed", "Claude Code не подтвердил установленный плагин Extella.")
         return result("success", "ready", "Claude Code подключён к Extella.",
                       authorization_scope="account", live_enabled=True,
                       bridge_port=int(port), mcp_server="extella_" + handle,
                       account_binding_proved_by="token_validate",
                       execution_policy_version=health.get("execution_policy_version"),
                       default_execution_profile_id=health.get("default_execution_profile_id"))
+
+    # A partially failed install must be resumable rather than blindly
+    # repeated. This step reports which of the five are already done, reads
+    # only, and calls neither a model nor Extella.
+    if action == "status":
+        plugin_entry = installed_plugin(run([claude, "plugin", "list", "--json"], timeout=60))
+        token = token_from_disk()
+        handle = handle_for(token) if len(token) >= 8 else ""
+        token = ""
+        listed = run([claude, "mcp", "list"], timeout=60)
+        port_probe = run(["/bin/launchctl", "getenv", "EXTELLA_CLAUDE_BRIDGE_PORT"], timeout=20)
+        port = (port_probe.stdout or "").strip() if port_probe else ""
+        done = {
+            "preflight": True,
+            "install": bool(plugin_entry),
+            "credentials": bool(handle) and os.path.isfile(os.path.join(MCP_DIR, handle + ".sh"))
+            and bool(listed) and ("extella_" + handle) in (listed.stdout or ""),
+            "bridge": port.isdigit(),
+            "verify": False,
+        }
+        remaining = [step for step in ["install", "credentials", "bridge", "verify"] if not done[step]]
+        return result("success", "status_read", "Состояние установки прочитано.",
+                      completed=done, resume_from=(remaining[0] if remaining else "verify"),
+                      plugin_version=str((plugin_entry or {}).get("version", ""))[:64])
 
     return result("error", "unsupported_step", "Установщик получил неизвестный этап.")

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "claude-plugins-official",
+    "source": "github",
+    "repo": "example/official",
+    "installLocation": "/Users/example/.claude/plugins/cache/official"
+  },
+  {
+    "name": "extella-claude",
+    "source": "github",
+    "repo": "AnvarBakiyev/extella-codex-bridge",
+    "installLocation": "/Users/example/.claude/plugins/cache/extella-claude"
+  }
+]

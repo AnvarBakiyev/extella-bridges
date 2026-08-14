@@ -1,0 +1,51 @@
+[
+  {
+    "id": "example-plugin-0@example-marketplace",
+    "version": "1.0.0",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/Users/example/.claude/plugins/cache/example-marketplace/example-plugin-0/1.0.0",
+    "installedAt": "2026-06-29T18:19:12.043Z",
+    "lastUpdated": "2026-06-29T18:19:12.043Z"
+  },
+  {
+    "id": "example-plugin-1@example-marketplace",
+    "version": "0.0.1",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/Users/example/.claude/plugins/cache/example-marketplace/example-plugin-1/0.0.1",
+    "installedAt": "2026-03-21T08:18:02.003Z",
+    "lastUpdated": "2026-03-21T08:18:02.003Z",
+    "mcpServers": {
+      "fakechat": {
+        "command": "bun",
+        "args": [
+          "run",
+          "--cwd",
+          "${CLAUDE_PLUGIN_ROOT}",
+          "--shell=bun",
+          "--silent",
+          "start"
+        ]
+      }
+    }
+  },
+  {
+    "id": "example-plugin-2@example-marketplace",
+    "version": "67f1c1df4223",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/Users/example/.claude/plugins/cache/example-marketplace/example-plugin-2/67f1c1df4223",
+    "installedAt": "2026-06-29T18:20:01.477Z",
+    "lastUpdated": "2026-08-14T16:37:33.773Z"
+  },
+  {
+    "id": "extella-claude-bridge@extella-claude",
+    "version": "67f1c1df4223",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "/Users/example/.claude/plugins/cache/extella-claude/extella-claude-bridge/67f1c1df4223",
+    "installedAt": "2026-08-14T19:00:00.000Z",
+    "lastUpdated": "2026-08-14T19:00:00.000Z"
+  }
+]

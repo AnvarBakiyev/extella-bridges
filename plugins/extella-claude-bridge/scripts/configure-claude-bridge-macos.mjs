@@ -13,7 +13,7 @@
 import { execFile } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
-import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,8 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (value === "--disable") {
       options.disable = true;
+    } else if (value === "--uninstall") {
+      options.uninstall = true;
     } else if (value === "--help") {
       options.help = true;
     } else {
@@ -99,7 +101,10 @@ function parseArgs(argv) {
 }
 
 function validateOptions(options) {
-  if (options.disable === true) return { disable: true };
+  if (options.disable === true || options.uninstall === true) {
+    return { disable: options.disable === true, uninstall: options.uninstall === true,
+             dryRun: options.dryRun === true };
+  }
   if (options.accountWide !== true) {
     throw new Error("--account-wide is required");
   }
@@ -320,6 +325,30 @@ async function waitForHealth(port) {
   );
 }
 
+// The exact removal surface, stated rather than implied. The token file is
+// deliberately not in files_removed: it is the owner's credential material and
+// deleting it is a separate decision, not a side effect of uninstalling a
+// service. Nothing here names the Codex label, directory, or variables.
+function removalPlan({ plistPath, runtimeDir, stateDir, supportDir }) {
+  return {
+    service: LABEL,
+    files_removed: [plistPath, runtimeDir, stateDir, supportDir],
+    launchctl_variables_unset: [SECRET_VARIABLE, PORT_VARIABLE, BINDING_VARIABLE],
+    files_retained: [
+      `${homedir()}/.extella/mcp (token and headers helper: removed only on a separate explicit decision)`,
+    ],
+    untouched: [
+      "ai.extella.codex-bridge and its LaunchAgent",
+      "EXTELLA_BRIDGE_SECRET, EXTELLA_BRIDGE_PORT, EXTELLA_BRIDGE_ACCOUNT_BINDING",
+      "EXTELLA_API_TOKEN",
+      "~/Library/Application Support/Extella Agent Builder",
+      "the Extella MCP server entry in Claude Code (remove with `claude mcp remove`)",
+    ],
+    idempotent: true,
+    model_called: false,
+  };
+}
+
 function paths() {
   const supportDir = join(
     homedir(),
@@ -344,7 +373,8 @@ async function main() {
         "--confirm-account-scope I_UNDERSTAND_ALL_AGENTS " +
         "--capability general-assistance " +
         "--confirm-live-cost I_UNDERSTAND_COST [--port 18788] [--dry-run]\n" +
-        "       configure-claude-bridge-macos.mjs --disable",
+        "       configure-claude-bridge-macos.mjs --disable\n" +
+        "       configure-claude-bridge-macos.mjs --uninstall [--dry-run]",
     );
     return;
   }
@@ -353,19 +383,49 @@ async function main() {
   }
   const { supportDir, runtimeDir, stateDir, logPath, plistPath } = paths();
   const domain = `gui/${process.getuid()}`;
-  const existingPort = parsed.disable ? null : await existingConfiguredPort(plistPath);
+  const existingPort =
+    parsed.disable || parsed.uninstall ? null : await existingConfiguredPort(plistPath);
   const options = validateOptions(
     parsed.port == null && existingPort != null
       ? { ...parsed, port: existingPort }
       : parsed,
   );
 
-  if (options.disable) {
+  if (options.disable || options.uninstall) {
+    const plan = removalPlan({ plistPath, runtimeDir, stateDir, supportDir });
+    if (options.dryRun) {
+      console.log(JSON.stringify({ status: "removal_planned", ...plan }, null, 2));
+      return;
+    }
+    // Scoped to this service by construction: one label, one plist, one
+    // support directory, and three variables whose names all carry CLAUDE.
+    // Nothing here can reach the Codex service or its environment.
     await launchctl(["bootout", domain, plistPath], { ignoreFailure: true });
     await launchctl(["disable", `${domain}/${LABEL}`], { ignoreFailure: true });
+    const removed = [];
+    if (options.uninstall) {
+      for (const name of plan.launchctl_variables_unset) {
+        await launchctl(["unsetenv", name], { ignoreFailure: true });
+      }
+      for (const path of plan.files_removed) {
+        try {
+          await rm(path, { recursive: true, force: true });
+          removed.push(path);
+        } catch {
+          // force:true already ignores a missing path, so a repeat run is a
+          // no-op rather than an error.
+        }
+      }
+    }
     console.log(
       JSON.stringify(
-        { status: "disabled", service: LABEL, files_retained: true, model_called: false },
+        {
+          status: options.uninstall ? "uninstalled" : "disabled",
+          service: LABEL,
+          removed,
+          retained: plan.files_retained,
+          model_called: false,
+        },
         null,
         2,
       ),
@@ -497,6 +557,7 @@ export {
   parseArgs,
   paths,
   plist,
+  removalPlan,
   validateOptions,
   writeRuntime,
 };

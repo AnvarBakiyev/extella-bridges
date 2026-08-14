@@ -18,6 +18,7 @@ import {
   existingConfiguredPort,
   paths,
   plist,
+  removalPlan,
   validateOptions,
   writeRuntime,
 } from "../../extella-claude-bridge/scripts/configure-claude-bridge-macos.mjs";
@@ -208,6 +209,10 @@ test("every Expert result is a JSON string and carries the cost contract", async
         trimmed.startsWith("return found") ||
         trimmed.startsWith("return candidate") ||
         trimmed.startsWith("return env") ||
+        trimmed.startsWith("return item") ||
+        trimmed.startsWith("return [item") ||
+        trimmed.startsWith("return payload.get") ||
+        trimmed.startsWith("return []") ||
         trimmed.startsWith("return subprocess.run"),
       `unexpected return shape: ${trimmed}`,
     );
@@ -270,4 +275,114 @@ test("the setup Expert calls no model on any step", async () => {
     ["--version", "auth", "mcp", "plugin"],
   );
   assert.equal(source.includes('"-p"'), false);
+});
+
+// ── Measured plugin-list shape ─────────────────────────────────────────────
+
+test("the plugin parser matches the measured shape, which has no name key", async () => {
+  const fixture = JSON.parse(
+    await readFile(join(import.meta.dirname, "fixtures", "claude-plugin-list.json"), "utf8"),
+  );
+  // Recorded from Claude Code 2.1.81 on 2026-08-14.
+  assert.ok(Array.isArray(fixture), "the top level is a bare array, not an object");
+  assert.equal(
+    fixture.some((entry) => "name" in entry),
+    false,
+    "no entry carries a name key",
+  );
+  for (const key of ["id", "version", "scope", "enabled", "installPath"]) {
+    assert.ok(key in fixture[0], `${key} must be present`);
+  }
+  const ours = fixture.find((entry) => entry.id === "extella-claude-bridge@extella-claude");
+  assert.ok(ours, "the fixture must contain our own entry");
+  // A git-sourced plugin reports a commit SHA where a semantic version would
+  // otherwise sit, so setup records the value instead of comparing it.
+  assert.match(ours.version, /^[0-9a-f]{12}$/);
+});
+
+test("setup identifies the plugin by id and enablement, never by name", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  assert.match(source, /item\.get\("id"\) == PLUGIN and item\.get\("enabled"\) is True/);
+  // Measured: plugin list entries have no "name". Marketplace entries do, so
+  // the ban is scoped to how the plugin itself is identified.
+  const pluginLookup = source.slice(
+    source.indexOf("def installed_plugin"),
+    source.indexOf("def handle_for"),
+  );
+  assert.equal(pluginLookup.includes('"name"'), false);
+  assert.ok(source.includes('PLUGIN = "extella-claude-bridge@extella-claude"'));
+  // The tolerant dict fallback stays, but the array is the expectation.
+  assert.ok(source.includes("isinstance(payload, list)"));
+});
+
+// ── Rollback contract ──────────────────────────────────────────────────────
+
+test("removal touches only the Claude service", () => {
+  const plan = removalPlan({
+    plistPath: "/tmp/x/ai.extella.claude-bridge.plist",
+    runtimeDir: "/tmp/x/runtime",
+    stateDir: "/tmp/x/state",
+    supportDir: "/tmp/x",
+  });
+  assert.equal(plan.service, LABEL);
+  const serialized = JSON.stringify(plan.files_removed) + JSON.stringify(plan.launchctl_variables_unset);
+  assert.equal(serialized.includes("codex"), false);
+  assert.equal(serialized.includes("Extella Agent Builder"), false);
+  for (const name of plan.launchctl_variables_unset) {
+    assert.match(name, /^EXTELLA_CLAUDE_BRIDGE_/, `${name} must be Claude-scoped`);
+  }
+  // The Codex secret, port, binding, and account token are named as untouched.
+  const untouched = plan.untouched.join(" ");
+  for (const name of ["EXTELLA_BRIDGE_SECRET", "EXTELLA_API_TOKEN", "codex-bridge"]) {
+    assert.ok(untouched.includes(name), `${name} must be declared untouched`);
+  }
+  assert.equal(plan.idempotent, true);
+  assert.equal(plan.model_called, false);
+});
+
+test("uninstall never deletes the account credential as a side effect", () => {
+  const plan = removalPlan({
+    plistPath: "/tmp/x/p.plist",
+    runtimeDir: "/tmp/x/runtime",
+    stateDir: "/tmp/x/state",
+    supportDir: "/tmp/x",
+  });
+  assert.equal(
+    plan.files_removed.some((path) => path.includes(".extella/mcp")),
+    false,
+    "the token and helper are credential material, not service state",
+  );
+  assert.ok(plan.files_retained.join(" ").includes(".extella/mcp"));
+  assert.ok(plan.files_retained.join(" ").includes("separate explicit decision"));
+});
+
+test("removal is idempotent because every step tolerates absence", async () => {
+  const source = await readFile(
+    join(CLAUDE_PLUGIN, "scripts", "configure-claude-bridge-macos.mjs"),
+    "utf8",
+  );
+  assert.ok(source.includes('rm(path, { recursive: true, force: true })'));
+  assert.match(source, /unsetenv[\s\S]{0,80}ignoreFailure: true/);
+  assert.match(source, /bootout[\s\S]{0,120}ignoreFailure: true/);
+});
+
+// ── Resuming a partial install ─────────────────────────────────────────────
+
+test("a partial install can be read and resumed instead of blindly repeated", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  assert.ok(source.includes('action == "status"'));
+  assert.ok(source.includes('"resume_from"') || source.includes("resume_from="));
+  for (const step of ["install", "credentials", "bridge"]) {
+    assert.ok(source.includes(`"${step}"`), `${step} must appear in the status map`);
+  }
+  // The status step reads only: no marketplace, plugin, mcp add, or launchctl
+  // setenv may appear after it.
+  const statusBody = source.slice(source.indexOf('if action == "status"'));
+  for (const forbidden of ["setenv", "add-json", "marketplace", "add"]) {
+    assert.equal(
+      statusBody.includes(`"${forbidden}"`),
+      false,
+      `${forbidden} must not run during a status read`,
+    );
+  }
 });
