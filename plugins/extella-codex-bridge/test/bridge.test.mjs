@@ -520,6 +520,24 @@ test("plugin manifest, package, installer, and documented tag share one version"
   assert.equal(documentedVersion, pluginVersion);
 });
 
+test("desktop installer unwraps both Extella result envelopes", async () => {
+  const installer = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  const body = installer.match(
+    /  function _parseRunResult\(response\) \{([\s\S]*?)\n  \}\n\n  function connectionStatus/,
+  )?.[1];
+  assert.ok(body, "_parseRunResult must remain extractable for contract testing");
+  const parse = Function(`return function (response) {${body}\n}`)();
+  const value = parse({
+    result: {
+      result: JSON.stringify({ status: "success", code: "ready" }),
+    },
+  });
+  assert.deepEqual(value, { status: "success", code: "ready" });
+});
+
 test("Extella Desktop installer pins hashes for every embedded Expert", async () => {
   const source = await readFile(
     join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
@@ -545,7 +563,7 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.3'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.4'/);
   assert.match(source, /installed, plugin_path = installed_plugin\(\)/);
   assert.match(source, /plugin_version_mismatch/);
   assert.match(
