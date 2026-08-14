@@ -36,18 +36,22 @@ a branch is a floating source.
 
 ## Direction A — one Extella account, one MCP connection
 
+Proven live on 2026-08-14: a real `list_agents` call returned account data
+through this configuration.
+
 `plugin.json` deliberately declares neither `userConfig` nor `mcpServers`.
 A plugin carries exactly one set of `userConfig` values, so a second Extella
 account would overwrite the first, which breaks the rule that each account is
 its own connection.
 
-Instead each account gets a derived, non-reversible handle and its own entry:
+Each account gets a derived, non-reversible handle and its own entry:
 
 | Derived from the account token | Example |
 | --- | --- |
 | handle | `acct_9f2c1ab47e05` |
 | MCP server name | `extella_acct_9f2c1ab47e05` |
-| environment variable | `EXTELLA_MCP_TOKEN_ACCT_9F2C1AB47E05` |
+| token file, mode 0600 | `~/.extella/mcp/acct_9f2c1ab47e05.token` |
+| headers helper, mode 0700 | `~/.extella/mcp/acct_9f2c1ab47e05.sh` |
 
 ```json
 {
@@ -55,27 +59,50 @@ Instead each account gets a derived, non-reversible handle and its own entry:
     "extella_acct_9f2c1ab47e05": {
       "type": "http",
       "url": "https://api.extella.ai/mcp/",
-      "headers": { "X-Auth-Token": "${EXTELLA_MCP_TOKEN_ACCT_9F2C1AB47E05}" }
+      "headersHelper": "/Users/you/.extella/mcp/acct_9f2c1ab47e05.sh"
     }
   }
 }
 ```
 
-`${VAR}` expansion in `headers` is a documented Claude Code feature, so the
-token value never enters the configuration file, git, or a shell history. No
-`:-default` is used on purpose: an unset variable must surface as a
-missing-variable warning in `claude mcp list` rather than resolve to something
-that merely happens to work.
+### Why headersHelper and not `${VAR}`
 
-Adding a second account merges by server name, so it cannot disturb the first,
-and re-running setup for the same account is idempotent.
+Both keep the token out of the config file and out of git. `${VAR}` was
+measured and rejected for two further reasons:
 
-**Unclosed:** how the variable is populated. `launchctl setenv NAME VALUE`
-places the token in that process's argv, briefly visible in the process table.
-The Codex bridge already does this for `EXTELLA_API_TOKEN`, so it is an
-inherited property rather than a new one — but it is not the claim
-"the token never reaches argv". The intended fix is a `headersHelper` script
-reading a `0600` file, which avoids argv entirely. It is not implemented here.
+* it puts the token in the process environment;
+* **`claude mcp get` prints the resolved header value in plain text.** With a
+  helper that command has nothing to print — the measured output shows no
+  `Headers` block at all.
+
+The helper reads the token from its 0600 file at request time and never
+receives it as an argument, so it appears in no process listing.
+
+### Three headers, and an agent id that belongs to the token
+
+A connection carrying only `X-Auth-Token` fails every tool call with a
+dependency resolution error for `token`. Extella needs the same trio that
+`deploy-extella-assets.mjs` already sends on every REST call:
+
+```
+X-Auth-Token   from the 0600 file
+X-Profile-Id   default
+X-Agent-Id     resolved per token, NOT the literal agent_extella_default
+```
+
+`POST /api/token/validate` returns `agent_id` for the token; it is resolved
+once at setup and written into the helper.
+
+### Verification must not trust "Connected"
+
+`claude mcp list` and `claude mcp get` report `✓ Connected` for a server with
+no token at all, and for a deliberately wrong one. Measured: an MCP
+`initialize` returns an identical HTTP 200 in all three cases, so the health
+check proves reachability and nothing else.
+
+Account binding is verified against `POST /api/token/validate`, which the Codex
+installer already uses, calls no model, and yields the agent id the headers
+need.
 
 ## Direction B — the Expert
 

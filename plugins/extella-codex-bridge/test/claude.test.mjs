@@ -23,9 +23,12 @@ import {
 import {
   accountHandle,
   environmentName,
+  headersHelperScript,
+  isProvenAccountBinding,
   mcpConfigFragment,
   mergeAccountConfig,
   serverName,
+  tokenFilePath,
 } from "../../extella-claude-bridge/scripts/extella-mcp-accounts.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -658,27 +661,62 @@ test("each Extella account derives its own stable server name and variable", () 
   assert.match(environmentName(firstHandle), /^EXTELLA_MCP_TOKEN_ACCT_[A-F0-9]{12}$/);
 });
 
-test("an MCP entry references a variable and never carries the token", () => {
+const HELPER_OPTIONS = Object.freeze({
+  headersHelperPath: "/Users/example/.extella/mcp/helper.sh",
+  agentId: "agent_XwZBKvd8dD70jKvW4WrZm",
+  home: "/Users/example",
+});
+
+test("an MCP entry carries no token and no header block at all", () => {
   const token = "extella-token-that-must-never-be-written-down";
   const handle = accountHandle(token);
-  const fragment = mcpConfigFragment(handle);
+  const fragment = mcpConfigFragment(handle, HELPER_OPTIONS);
   const serialized = JSON.stringify(fragment);
+  const entry = fragment.mcpServers[serverName(handle)];
 
   assert.equal(serialized.includes(token), false);
+  // Measured: `claude mcp get` prints a resolved ${VAR} header in plain text.
+  // A helper leaves that command nothing to print.
+  assert.equal("headers" in entry, false);
+  assert.equal(entry.headersHelper, HELPER_OPTIONS.headersHelperPath);
+});
+
+test("the helper sends all three Extella headers and a per-token agent id", () => {
+  const handle = accountHandle("extella-token-account-one-abcdefgh");
+  const script = headersHelperScript(handle, HELPER_OPTIONS);
+
+  for (const header of ["X-Auth-Token", "X-Profile-Id", "X-Agent-Id"]) {
+    assert.ok(script.includes(header), `${header} must be sent`);
+  }
+  // Measured: a lone X-Auth-Token fails every tool call, and the literal
+  // "agent_extella_default" is not this token's agent.
+  assert.ok(script.includes(HELPER_OPTIONS.agentId));
+  assert.equal(script.includes("agent_extella_default"), false);
+  // The token is read from a 0600 file at request time, never passed as an
+  // argument, so it appears in no process listing.
+  assert.ok(script.includes(`cat "${tokenFilePath(handle, HELPER_OPTIONS.home)}"`));
+  assert.throws(() => headersHelperScript(handle, { ...HELPER_OPTIONS, agentId: "" }));
+});
+
+test("account binding is proven by token validation, never by MCP connectivity", () => {
+  // Measured: an MCP initialize returns HTTP 200 with a valid token, with no
+  // token, and with a deliberately wrong one, which is why every server shows
+  // "Connected". Only the validate endpoint distinguishes them.
   assert.equal(
-    fragment.mcpServers[serverName(handle)].headers["X-Auth-Token"],
-    `\${${environmentName(handle)}}`,
+    isProvenAccountBinding({ valid: true, agent_id: "agent_XwZBKvd8dD70jKvW4WrZm" }),
+    true,
   );
-  // No default value: an unset variable must show up as a missing-variable
-  // warning in `claude mcp list` rather than silently resolving.
-  assert.equal(serialized.includes(":-"), false);
+  assert.equal(isProvenAccountBinding({ valid: false, agent_id: "agent_XwZBKvd8dD70jKvW4WrZm" }), false);
+  assert.equal(isProvenAccountBinding({ valid: true }), false);
+  assert.equal(isProvenAccountBinding({ status: "connected" }), false);
+  assert.equal(isProvenAccountBinding(null), false);
 });
 
 test("configuring a second account leaves the first one intact", () => {
   const firstHandle = accountHandle("extella-token-account-one-abcdefgh");
   const secondHandle = accountHandle("extella-token-account-two-ijklmnop");
-  const afterFirst = mergeAccountConfig({}, firstHandle);
-  const afterSecond = mergeAccountConfig(afterFirst, secondHandle);
+  const afterFirst = mergeAccountConfig({}, firstHandle, HELPER_OPTIONS);
+  const afterSecond = mergeAccountConfig(afterFirst, secondHandle, HELPER_OPTIONS);
 
   assert.deepEqual(
     Object.keys(afterSecond.mcpServers).sort(),
@@ -689,7 +727,7 @@ test("configuring a second account leaves the first one intact", () => {
     afterFirst.mcpServers[serverName(firstHandle)],
   );
   // Re-running setup for one account must be idempotent.
-  assert.deepEqual(mergeAccountConfig(afterSecond, firstHandle), afterSecond);
+  assert.deepEqual(mergeAccountConfig(afterSecond, firstHandle, HELPER_OPTIONS), afterSecond);
 });
 
 test("the shipped Claude plugin manifest stores no account material", async () => {
