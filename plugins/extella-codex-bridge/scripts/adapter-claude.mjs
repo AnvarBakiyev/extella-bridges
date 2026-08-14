@@ -342,9 +342,26 @@ function parseClaudeOutput(stdout, expectedEventId) {
     // well-formed one there is nothing to persist and nothing to resume.
     throw adapterFailure("claude_session_id_missing", "claude_output_parse");
   }
-  const structured = envelope.structured_output;
-  if (structured === undefined || structured === null) {
-    throw adapterFailure("claude_structured_output_missing", "claude_result_parse");
+  // A denied tool call means something inside the run reached for a
+  // capability this profile does not grant. That is a policy failure, not a
+  // slow answer, and it must not be reported as a completed delegation.
+  if (Array.isArray(envelope.permission_denials) && envelope.permission_denials.length > 0) {
+    throw adapterFailure("claude_permission_denied", "claude_execute");
+  }
+  if (envelope.stop_reason !== undefined && envelope.stop_reason !== "end_turn") {
+    // Measured: an unsatisfiable structured-output request ends at "tool_use"
+    // with no answer at all. Anything other than a completed turn is a failure.
+    throw adapterFailure("claude_turn_incomplete", "claude_execute");
+  }
+  if (typeof envelope.result !== "string" || envelope.result.trim() === "") {
+    throw adapterFailure("claude_result_missing", "claude_result_parse");
+  }
+  let structured;
+  try {
+    structured = JSON.parse(envelope.result.trim());
+  } catch {
+    // A prose answer, a fenced code block, or a Python repr all land here.
+    throw adapterFailure("claude_result_not_json", "claude_result_parse");
   }
   const errors = validateClaudeResult(structured, expectedEventId);
   if (errors.length > 0) {
@@ -382,8 +399,16 @@ async function runClaude({
     "Task:",
     prompt,
     "",
-    "Return JSON matching the supplied schema.",
-    `Set event_id to exactly: ${eventId}`,
+    // The shape is requested in words because --json-schema cannot be used
+    // here; the adapter re-validates the parsed object regardless of what the
+    // model was asked for.
+    "Reply with ONLY a JSON object. No prose before or after it, and no code",
+    "fence. The object must have exactly these keys and no others:",
+    '  "schema_version": "1.0"',
+    '  "provider": "claude"',
+    `  "event_id": "${eventId}"`,
+    '  "status": "completed"',
+    '  "answer": <your answer to the task, as a JSON string>',
   ].join("\n");
 
   const args = claudeDelegationArguments({ sessionId: sessionId ?? null });

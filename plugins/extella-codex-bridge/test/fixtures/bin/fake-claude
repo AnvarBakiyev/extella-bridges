@@ -88,7 +88,7 @@ if (argsLog) appendFileSync(argsLog, `${JSON.stringify(argv)}\n`);
 if (envLog) appendFileSync(envLog, `${JSON.stringify(process.env)}\n`);
 
 const stdin = readStdin();
-const eventMatch = stdin.match(/Set event_id to exactly: (\S+)/);
+const eventMatch = stdin.match(/"event_id":\s*"([^"]+)"/);
 const eventId = eventMatch ? eventMatch[1] : "evt_unknown";
 const resumed = flagValue("--resume");
 const sessionId = resumed || SESSIONS[callIndex % SESSIONS.length];
@@ -129,28 +129,39 @@ if (mode === "repr") {
   process.exit(0);
 }
 
+const answer = {
+  schema_version: "1.0",
+  provider: "claude",
+  event_id: mode === "event_mismatch" ? "evt_somebody_else" : eventId,
+  status: "completed",
+  answer: `fake-claude answered ${stdin.length} prompt characters`,
+};
+if (mode === "bad_schema") answer.unexpected_field = true;
+
 const envelope = {
   type: "result",
   subtype: "success",
   is_error: mode === "error_flag",
+  stop_reason: "end_turn",
   num_turns: 1,
   total_cost_usd: 0.0123,
   session_id: sessionId,
-  result: "structured",
+  permission_denials: [],
+  result: JSON.stringify(answer),
   usage: { input_tokens: 100, output_tokens: 42 },
-  structured_output: {
-    schema_version: "1.0",
-    provider: "claude",
-    event_id: mode === "event_mismatch" ? "evt_somebody_else" : eventId,
-    status: "completed",
-    answer: `fake-claude answered ${stdin.length} prompt characters`,
-  },
 };
 
 if (mode === "no_session") delete envelope.session_id;
 if (mode === "bad_session") envelope.session_id = "not-a-uuid";
-if (mode === "no_structured") delete envelope.structured_output;
-if (mode === "bad_schema") envelope.structured_output.unexpected_field = true;
+if (mode === "no_result") delete envelope.result;
+if (mode === "prose_result") envelope.result = "Sure! Here is the answer: ok";
+if (mode === "fenced_result") {
+  envelope.result = "```json\n" + JSON.stringify(answer) + "\n```";
+}
+if (mode === "tool_use_stop") envelope.stop_reason = "tool_use";
+if (mode === "denied") {
+  envelope.permission_denials = [{ tool_name: "Bash" }];
+}
 
 process.stdout.write(`${JSON.stringify(envelope)}\n`);
 process.exit(0);

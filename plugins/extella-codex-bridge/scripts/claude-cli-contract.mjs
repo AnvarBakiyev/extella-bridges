@@ -27,21 +27,25 @@ const SESSION_SETTINGS = Object.freeze({
 
 const EMPTY_MCP_CONFIG = Object.freeze({ mcpServers: {} });
 
-// The delegated result contract. Kept small on purpose: it is serialized into
-// argv, so it must be constant and compact rather than read from a file that
-// something else could edit between verification and use.
-const RESULT_SCHEMA = Object.freeze({
-  type: "object",
-  additionalProperties: false,
-  required: ["schema_version", "provider", "event_id", "status", "answer"],
-  properties: {
-    schema_version: { const: "1.0" },
-    provider: { const: "claude" },
-    event_id: { type: "string", minLength: 8, maxLength: 128 },
-    status: { const: "completed" },
-    answer: { type: "string" },
-  },
-});
+// The delegated result contract. Enforced by this adapter after the run, not
+// by --json-schema.
+//
+// Measured 2026-08-14: --json-schema delivers its payload through an internal
+// structured-output tool call. With --tools "" that tool does not exist, and
+// with --permission-mode dontAsk it is denied, so every attempt ended at
+// stop_reason "tool_use" with structured_output null — three turns and roughly
+// triple the cost for no result. Dropping the flag and asking for a bare JSON
+// object instead finished in one turn with an exact object, and keeps the
+// stronger isolation rather than trading it for a convenience.
+//
+// This mirrors how the Codex adapter reads its final agent_message text.
+const RESULT_FIELDS = Object.freeze([
+  "schema_version",
+  "provider",
+  "event_id",
+  "status",
+  "answer",
+]);
 
 // Belt and suspenders behind `--tools ""`. If a future release changes how an
 // empty tool set is interpreted, these names still have to be denied.
@@ -113,8 +117,8 @@ function baseDelegationArguments() {
     "-p",
     "--output-format",
     "json",
-    "--json-schema",
-    compactJson(RESULT_SCHEMA),
+    // No --json-schema: see RESULT_FIELDS above. It cannot coexist with
+    // --tools "" and --permission-mode dontAsk, and the isolation wins.
     // Empty set: user, project, and local settings are all skipped. Verified
     // empirically — `claude --setting-sources "" mcp list` reports no servers
     // while `--setting-sources "user"` lists the user's own.
@@ -165,7 +169,7 @@ export {
   ENVIRONMENT_ALLOWLIST_PREFIXES,
   ENVIRONMENT_FORCED,
   MANAGED_SETTINGS_PATHS,
-  RESULT_SCHEMA,
+  RESULT_FIELDS,
   SESSION_ID,
   SESSION_SETTINGS,
   claudeAuthStatusArguments,

@@ -146,8 +146,9 @@ test("delegation argv disables every ambient Claude Code input", async (t) => {
   assert.ok(argv.includes("--disable-slash-commands"));
   assert.equal(pairs.get("--permission-mode"), "dontAsk");
   assert.equal(pairs.get("--max-turns"), "1");
-  // Structured output is requested by schema, not parsed out of free text.
-  assert.ok(pairs.has("--json-schema"));
+  // Measured: --json-schema needs an internal structured-output tool, which
+  // --tools "" removes and dontAsk denies. Isolation is kept, the flag is not.
+  assert.equal(argv.includes("--json-schema"), false);
   assert.equal(argv[0], "-p");
 });
 
@@ -437,10 +438,16 @@ const REJECTED_OUTPUT_MODES = [
   ["truncated", "claude_output_invalid_json"],
   ["no_session", "claude_session_id_missing"],
   ["bad_session", "claude_session_id_missing"],
-  ["no_structured", "claude_structured_output_missing"],
+  ["no_result", "claude_result_missing"],
+  ["prose_result", "claude_result_not_json"],
+  ["fenced_result", "claude_result_not_json"],
   ["bad_schema", "claude_result_schema_invalid"],
   ["event_mismatch", "claude_result_schema_invalid"],
   ["error_flag", "claude_reported_error"],
+  // A run that ends reaching for a tool produced no answer at all; this is
+  // exactly what an unsatisfiable --json-schema request looked like live.
+  ["tool_use_stop", "claude_turn_incomplete"],
+  ["denied", "claude_permission_denied"],
 ];
 
 for (const [mode, code] of REJECTED_OUTPUT_MODES) {
