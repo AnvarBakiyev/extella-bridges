@@ -563,7 +563,8 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.4'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.5'/);
+  assert.match(source, /"\.extella", "api_token\.txt"/);
   assert.match(source, /installed, plugin_path = installed_plugin\(\)/);
   assert.match(source, /plugin_version_mismatch/);
   assert.match(
