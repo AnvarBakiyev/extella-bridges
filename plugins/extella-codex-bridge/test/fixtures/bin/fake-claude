@@ -95,6 +95,28 @@ const sessionId = resumed || SESSIONS[callIndex % SESSIONS.length];
 
 if (mode === "exit_nonzero") process.exit(3);
 
+// Recorded verbatim from a live run on 2026-08-14, on a host where
+// `claude auth status --json` still answered loggedIn:true.
+if (mode === "auth_revoked") {
+  process.stdout.write(
+    `${JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      duration_ms: 197799,
+      num_turns: 1,
+      result:
+        'Failed to authenticate. API Error: 401 {"type":"error","error":' +
+        '{"type":"authentication_error","message":"OAuth access token has ' +
+        'been revoked."},"request_id":null}',
+      session_id: sessionId,
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    })}\n`,
+  );
+  process.exit(0);
+}
+
 if (mode === "truncated") {
   process.stdout.write(`{"type":"result","session_id":"${sessionId}","struc`);
   process.exit(0);

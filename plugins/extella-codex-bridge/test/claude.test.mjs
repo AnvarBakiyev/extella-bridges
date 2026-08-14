@@ -9,6 +9,7 @@ import test from "node:test";
 import { createBridgeServer, signRequest } from "../scripts/bridge-core.mjs";
 import { invokeProvider, conversationPath } from "../scripts/invoke-provider.mjs";
 import {
+  classifyClaudeError,
   claudeChildEnvironment,
   claudeConversationPath,
   inspectManagedSettings,
@@ -495,6 +496,43 @@ test("an unparsable auth status is a failure, not an assumption of success", asy
     (error) => error?.diagnostic?.code === "claude_auth_status_invalid",
   );
   assert.deepEqual(await readJsonLines(environment.argsLog), []);
+});
+
+// Regression for a measured defect, not a hypothetical one. On 2026-08-14 a
+// host answered `claude auth status --json` with loggedIn:true and then failed
+// the delegated run with 401 "OAuth access token has been revoked", twice, in
+// two independent environments.
+test("a revoked sign-in is named as such, not reported as a generic failure", async (t) => {
+  const environment = await withClaudeEnvironment(t, "auth_revoked");
+  await assert.rejects(
+    delegate(environment),
+    (error) => error?.diagnostic?.code === "claude_auth_revoked",
+  );
+  // The preflight passed: local state said signed in, so the run did start.
+  assert.equal((await readJsonLines(environment.argsLog)).length, 1);
+});
+
+test("the passing auth preflight is reported as local state, not as proof", async (t) => {
+  const environment = await withClaudeEnvironment(t);
+  const result = await delegate(environment);
+  assert.equal(result.cost_guard.local_login_state, "reported_signed_in");
+  assert.equal("logged_in" in result.cost_guard, false);
+});
+
+test("error classification derives a code without echoing the CLI message", () => {
+  const revoked =
+    'Failed to authenticate. API Error: 401 {"type":"error","error":' +
+    '{"type":"authentication_error","message":"OAuth access token has been revoked."}}';
+  assert.equal(classifyClaudeError(revoked), "claude_auth_revoked");
+  assert.equal(
+    classifyClaudeError("Not logged in · Please run /login"),
+    "claude_auth_required",
+  );
+  assert.equal(classifyClaudeError("something else entirely"), "claude_reported_error");
+  // The classifier returns a fixed code, never the server-authored text.
+  for (const text of [revoked, "Not logged in", "something else entirely"]) {
+    assert.equal(classifyClaudeError(text).includes(" "), false);
+  }
 });
 
 test("the auth check never surfaces the account email or organisation", async (t) => {

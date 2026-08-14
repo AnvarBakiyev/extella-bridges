@@ -260,8 +260,10 @@ async function verifyClaudeAuth({ environment = process.env } = {}) {
   if (status?.loggedIn !== true) {
     throw adapterFailure("claude_auth_required", "claude_auth_preflight");
   }
+  // Named for what it is. This is the CLI's locally cached view, not proof
+  // that a request will be accepted; see classifyClaudeError.
   return {
-    logged_in: true,
+    local_login_state: "reported_signed_in",
     subscription_type:
       typeof status.subscriptionType === "string" &&
       /^[a-z_]{1,32}$/.test(status.subscriptionType)
@@ -271,6 +273,25 @@ async function verifyClaudeAuth({ environment = process.env } = {}) {
 }
 
 // ── Result parsing ─────────────────────────────────────────────────────────
+
+// Measured 2026-08-14 on a host whose CLI credential had been revoked:
+// `claude auth status --json` answered loggedIn:true while the very next
+// delegated run returned 401 "OAuth access token has been revoked". The
+// preflight reads local state, so it is necessary but never sufficient, and a
+// failure here has to name the remedy instead of reporting a generic error.
+//
+// Only a fixed code is derived from the text. The CLI's own message is model-
+// and server-authored and never leaves this function.
+function classifyClaudeError(resultText) {
+  const text = String(resultText || "");
+  if (/revoked|expired|401|authentication_error/i.test(text)) {
+    return "claude_auth_revoked";
+  }
+  if (/not logged in|please run \/login/i.test(text)) {
+    return "claude_auth_required";
+  }
+  return "claude_reported_error";
+}
 
 function validateClaudeResult(response, expectedEventId) {
   const allowed = new Set([
@@ -313,7 +334,7 @@ function parseClaudeOutput(stdout, expectedEventId) {
     throw adapterFailure("claude_output_invalid_json", "claude_output_parse");
   }
   if (envelope.is_error === true) {
-    throw adapterFailure("claude_reported_error", "claude_execute");
+    throw adapterFailure(classifyClaudeError(envelope.result), "claude_execute");
   }
   const sessionId = envelope.session_id;
   if (!isSessionId(sessionId)) {
@@ -507,6 +528,7 @@ async function invokeClaude({
       // has not been measured, so it is not a spend ceiling.
       observed_total_cost_usd: result.totalCostUsd,
       spend_ceiling_enforced: false,
+      local_login_state: auth.local_login_state,
       subscription_type: auth.subscription_type,
       max_turns: 1,
       tools_disabled: true,
@@ -521,6 +543,7 @@ async function invokeClaude({
 export {
   PROVIDER_NAMESPACE,
   adapterFailure,
+  classifyClaudeError,
   claudeChildEnvironment,
   claudeConversationPath,
   inspectManagedSettings,

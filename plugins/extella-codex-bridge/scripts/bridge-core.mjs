@@ -78,6 +78,10 @@ const PROVIDER_ERROR_MESSAGES = new Map([
   ],
   ["claude_auth_required", "Claude Code is not signed in on this computer"],
   [
+    "claude_auth_revoked",
+    "The Claude Code sign-in on this computer was revoked; run claude auth login",
+  ],
+  [
     "claude_conversation_not_found",
     "This Extella chat no longer has a saved local Claude conversation",
   ],
@@ -85,7 +89,12 @@ const PROVIDER_ERROR_MESSAGES = new Map([
     "claude_conversation_profile_mismatch",
     "This Claude conversation uses a different execution profile",
   ],
-  ["claude_timed_out", "Claude did not finish before timeout_ms"],
+  [
+    "claude_timed_out",
+    "Claude did not finish before timeout_ms; a revoked sign-in also looks " +
+      "like this, because the CLI retries an authentication failure for about " +
+      "three minutes",
+  ],
   [
     "claude_managed_settings_conflict",
     "Managed Claude Code settings on this computer could not be isolated",
