@@ -1,0 +1,20 @@
+{
+  "name": "extella-claude",
+  "owner": {
+    "name": "Anvar Bakiyev",
+    "url": "https://github.com/AnvarBakiyev"
+  },
+  "metadata": {
+    "description": "Extella bridge plugins for Claude Code",
+    "version": "0.1.0-poc"
+  },
+  "plugins": [
+    {
+      "name": "extella-claude-bridge",
+      "source": "./plugins/extella-claude-bridge",
+      "description": "Connect Claude Code to Extella MCP, one connection per Extella account, and expose the signed local Extella bridge contract.",
+      "version": "0.1.0-poc",
+      "keywords": ["extella", "mcp", "bridge"]
+    }
+  ]
+}

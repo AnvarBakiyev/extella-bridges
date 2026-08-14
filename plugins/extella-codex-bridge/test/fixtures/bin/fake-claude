@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+// Test double for the Claude Code CLI. It never calls a model.
+//
+// The adapter passes an allowlisted environment to its child, so this fixture
+// deliberately cannot be configured through environment variables — that
+// restriction is exactly what the isolation tests assert. Instead the test
+// harness copies this file and replaces the placeholder below with the path
+// of a JSON control file.
+
+import { appendFileSync, readFileSync } from "node:fs";
+
+const CONTROL_PATH = "__FAKE_CLAUDE_CONTROL__";
+
+function control() {
+  try {
+    return JSON.parse(readFileSync(CONTROL_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const config = control();
+const mode = config.mode || "ok";
+const argsLog = config.argsLog || "";
+const envLog = config.envLog || "";
+const argv = process.argv.slice(2);
+
+const SESSIONS = [
+  "11111111-1111-4111-8111-111111111111",
+  "22222222-2222-4222-8222-222222222222",
+  "33333333-3333-4333-8333-333333333333",
+  "44444444-4444-4444-8444-444444444444",
+];
+
+function priorCalls() {
+  if (!argsLog) return 0;
+  try {
+    return readFileSync(argsLog, "utf8").trim().split("\n").filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
+
+function readStdin() {
+  try {
+    return readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function flagValue(name) {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1] : null;
+}
+
+if (argv[0] === "--version") {
+  process.stdout.write("2.1.81 (Claude Code)\n");
+  process.exit(0);
+}
+
+if (argv[0] === "auth" && argv[1] === "status") {
+  if (mode === "auth_broken") {
+    process.stdout.write("not json at all\n");
+    process.exit(0);
+  }
+  if (mode === "auth_failed") {
+    process.stderr.write("auth check failed\n");
+    process.exit(1);
+  }
+  process.stdout.write(
+    `${JSON.stringify({
+      loggedIn: mode !== "auth_logged_out",
+      authMethod: "claude.ai",
+      apiProvider: "firstParty",
+      email: "fixture-user@example.test",
+      orgId: "00000000-0000-4000-8000-000000000000",
+      orgName: "Fixture Org",
+      subscriptionType: "max",
+    })}\n`,
+  );
+  process.exit(0);
+}
+
+// Delegated run.
+const callIndex = priorCalls();
+if (argsLog) appendFileSync(argsLog, `${JSON.stringify(argv)}\n`);
+if (envLog) appendFileSync(envLog, `${JSON.stringify(process.env)}\n`);
+
+const stdin = readStdin();
+const eventMatch = stdin.match(/Set event_id to exactly: (\S+)/);
+const eventId = eventMatch ? eventMatch[1] : "evt_unknown";
+const resumed = flagValue("--resume");
+const sessionId = resumed || SESSIONS[callIndex % SESSIONS.length];
+
+if (mode === "exit_nonzero") process.exit(3);
+
+if (mode === "truncated") {
+  process.stdout.write(`{"type":"result","session_id":"${sessionId}","struc`);
+  process.exit(0);
+}
+
+if (mode === "repr") {
+  process.stdout.write(
+    `{'type': 'result', 'session_id': '${sessionId}', 'is_error': False}\n`,
+  );
+  process.exit(0);
+}
+
+const envelope = {
+  type: "result",
+  subtype: "success",
+  is_error: mode === "error_flag",
+  num_turns: 1,
+  total_cost_usd: 0.0123,
+  session_id: sessionId,
+  result: "structured",
+  usage: { input_tokens: 100, output_tokens: 42 },
+  structured_output: {
+    schema_version: "1.0",
+    provider: "claude",
+    event_id: mode === "event_mismatch" ? "evt_somebody_else" : eventId,
+    status: "completed",
+    answer: `fake-claude answered ${stdin.length} prompt characters`,
+  },
+};
+
+if (mode === "no_session") delete envelope.session_id;
+if (mode === "bad_session") envelope.session_id = "not-a-uuid";
+if (mode === "no_structured") delete envelope.structured_output;
+if (mode === "bad_schema") envelope.structured_output.unexpected_field = true;
+
+process.stdout.write(`${JSON.stringify(envelope)}\n`);
+process.exit(0);

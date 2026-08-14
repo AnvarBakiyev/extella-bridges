@@ -1,0 +1,185 @@
+$extens("include.py")
+include("import os", [])
+include("import json", [])
+include("import time", [])
+include("import uuid", [])
+include("import hmac", [])
+include("import hashlib", [])
+include("import subprocess", [])
+include("import urllib.request", [])
+include("import urllib.error", [])
+
+def extella_claude_account_bridge_v1(
+    prompt: str = "",
+    conversation_id: str = "",
+    execution_profile_id: str = "answer-only",
+    max_output_tokens: int = 2000,
+    timeout_ms: int = 120000
+) -> str:
+    import os, json, time, uuid, hmac, hashlib, subprocess, urllib.request, urllib.error
+
+    def launch_environment(name):
+        try:
+            completed = subprocess.run(
+                ["/bin/launchctl", "getenv", name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+                shell=False
+            )
+            if completed.returncode == 0 and completed.stdout.strip():
+                return completed.stdout.strip()
+        except Exception:
+            pass
+        return ""
+
+    def local_environment(name, default=""):
+        value = os.environ.get(name, "")
+        if value:
+            return value
+        value = launch_environment(name)
+        if value:
+            return value
+        return default
+
+    def strict_json(payload):
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":")
+        )
+
+    # The Claude bridge runs as its own launchd service with its own secret and
+    # its own port, so a stale Codex value inherited by a long-running Extella
+    # worker must never be used here.
+    secret = launch_environment("EXTELLA_CLAUDE_BRIDGE_SECRET") or os.environ.get(
+        "EXTELLA_CLAUDE_BRIDGE_SECRET", ""
+    )
+    if len(secret.encode("utf-8")) < 32:
+        return strict_json({"status": "error", "code": "bridge_not_configured", "message": "Local Claude bridge is not configured"})
+    token = local_environment("EXTELLA_API_TOKEN")
+    if len(token) < 8:
+        return strict_json({"status": "error", "code": "extella_account_unavailable", "message": "Current Extella account is unavailable"})
+    if not prompt or len(prompt) > 4000:
+        return strict_json({"status": "error", "code": "invalid_prompt", "message": "prompt must contain 1..4000 characters"})
+    conversation_suffix = conversation_id[4:] if conversation_id.startswith("ctx_") else ""
+    if conversation_id and (
+        len(conversation_suffix) < 32 or
+        len(conversation_suffix) > 64 or
+        any(not (character.isalnum() or character in "_-") for character in conversation_suffix)
+    ):
+        return strict_json({"status": "error", "code": "invalid_conversation_id", "message": "conversation_id is invalid"})
+    known_execution_profiles = (
+        "answer-only",
+        "workspace-read",
+        "web-research"
+    )
+    if execution_profile_id not in known_execution_profiles:
+        return strict_json({
+            "status": "error",
+            "code": "execution_profile_unknown",
+            "message": "Execution profile is not recognized"
+        })
+    if max_output_tokens < 1 or max_output_tokens > 2000:
+        return strict_json({"status": "error", "code": "invalid_budget", "message": "max_output_tokens must be 1..2000"})
+    if timeout_ms < 1000 or timeout_ms > 120000:
+        return strict_json({"status": "error", "code": "invalid_budget", "message": "timeout_ms must be 1000..120000"})
+    try:
+        port = int(
+            launch_environment("EXTELLA_CLAUDE_BRIDGE_PORT") or
+            os.environ.get("EXTELLA_CLAUDE_BRIDGE_PORT", "0")
+        )
+    except Exception:
+        return strict_json({"status": "error", "code": "bridge_port_invalid", "message": "Local Claude bridge port is invalid"})
+    if port < 1024 or port > 65535:
+        return strict_json({"status": "error", "code": "bridge_port_invalid", "message": "Local Claude bridge port is invalid"})
+
+    account_binding = hmac.new(
+        secret.encode("utf-8"),
+        ("extella-account-v1." + token).encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    token = ""
+    event_id = "evt_" + uuid.uuid4().hex
+    body = {
+        "schema_version": "1.3",
+        "event_id": event_id,
+        "account_binding": account_binding,
+        "capability": "general-assistance",
+        "provider": "claude",
+        "execution_profile_id": execution_profile_id,
+        "prompt": prompt,
+        "budget": {
+            "max_output_tokens": max_output_tokens,
+            "timeout_ms": timeout_ms
+        }
+    }
+    if conversation_id:
+        body["conversation_id"] = conversation_id
+    raw = json.dumps(
+        body,
+        ensure_ascii=False,
+        separators=(",", ":")
+    ).encode("utf-8")
+    timestamp = str(int(time.time()))
+    nonce = uuid.uuid4().hex
+    signed = timestamp.encode("utf-8") + b"." + nonce.encode("utf-8") + b"." + raw
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        signed,
+        hashlib.sha256
+    ).hexdigest()
+    secret = ""
+    request = urllib.request.Request(
+        "http://127.0.0.1:" + str(port) + "/v1/delegate",
+        data=raw,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Extella-Timestamp": timestamp,
+            "X-Extella-Nonce": nonce,
+            "X-Extella-Signature": "sha256=" + digest
+        }
+    )
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=max(2, int(timeout_ms / 1000) + 5)
+        ) as response:
+            result = json.loads(response.read(65536).decode("utf-8"))
+            if result.get("status") != "completed":
+                return strict_json(result)
+            if result.get("event_id") != event_id:
+                return strict_json({"status": "error", "code": "bridge_event_mismatch", "message": "Bridge event mismatch"})
+            return strict_json(result)
+    except urllib.error.HTTPError as error:
+        try:
+            failure = json.loads(error.read(65536).decode("utf-8"))
+            bridge_error = failure.get("error", {})
+            result = {
+                "status": "error",
+                "code": str(bridge_error.get("code", "bridge_http_error"))[:80],
+                "message": str(bridge_error.get("message", "Local Claude bridge rejected the request"))[:240]
+            }
+            if bridge_error.get("stage"):
+                result["stage"] = str(bridge_error.get("stage"))[:80]
+            if bridge_error.get("diagnostic_id"):
+                result["diagnostic_id"] = str(bridge_error.get("diagnostic_id"))[:128]
+            if isinstance(bridge_error.get("details"), dict):
+                result["details"] = bridge_error.get("details")
+            return strict_json(result)
+        except Exception:
+            return strict_json({"status": "error", "code": "bridge_http_error", "message": "Local Claude bridge rejected the request"})
+    except urllib.error.URLError:
+        return strict_json({
+            "status": "error",
+            "code": "bridge_unavailable",
+            "message": "Local Claude bridge is unavailable"
+        })
+    except Exception:
+        return strict_json({
+            "status": "error",
+            "code": "bridge_request_failed",
+            "message": "Local Claude bridge request failed"
+        })

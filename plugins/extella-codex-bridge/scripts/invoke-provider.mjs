@@ -20,6 +20,7 @@ import {
   resolveExecutionProfile,
 } from "./execution-profiles.mjs";
 import { GuideSourceError, loadExtellaGuideSource } from "./extella-guide-source.mjs";
+import { invokeClaude } from "./adapter-claude.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = resolve(SCRIPT_DIR, "..");
@@ -792,12 +793,7 @@ async function invokeProvider(options) {
     };
   }
 
-  if (options.provider === "claude") {
-    throw new Error(
-      "Claude adapter is reserved but not implemented in plugin version 0.1.0",
-    );
-  }
-  if (options.provider !== "codex") {
+  if (options.provider !== "codex" && options.provider !== "claude") {
     throw new Error(`Unsupported provider: ${options.provider}`);
   }
   if (
@@ -805,13 +801,49 @@ async function invokeProvider(options) {
     process.env.EXTELLA_AGENT_BUILDER_LIVE !== "I_UNDERSTAND_COST"
   ) {
     throw providerFailure(
-      "codex_live_cost_confirmation_required",
-      "codex_cost_gate",
+      `${options.provider}_live_cost_confirmation_required`,
+      `${options.provider}_cost_gate`,
     );
   }
 
   const workspace = resolve(options.workspace || process.cwd());
   const stateDir = resolve(options.stateDir || join(workspace, "state"));
+
+  if (options.provider === "claude") {
+    // The Claude route reuses this module only as a dispatcher. Signature,
+    // freshness, replay, account binding, and body limits were all enforced
+    // by bridge-core before control reached here.
+    let claudeGuide;
+    try {
+      claudeGuide = await (options.guideLoader || loadExtellaGuideSource)({
+        stateDir,
+      });
+    } catch (error) {
+      if (error instanceof GuideSourceError) {
+        throw providerFailure(error.code, "extella_guide_source");
+      }
+      throw providerFailure(
+        "extella_guide_source_unavailable",
+        "extella_guide_source",
+      );
+    }
+    return await invokeClaude({
+      accountBinding: options.accountBinding,
+      conversationId: options.conversationId,
+      eventId,
+      executionProfile: {
+        id: executionProfile.id,
+        policyVersion: EXECUTION_POLICY_VERSION,
+      },
+      guideContext: claudeGuide.context,
+      maxOutputTokens,
+      prompt,
+      stateDir,
+      timeoutMs,
+      workspace,
+    });
+  }
+
   const accountBinding = options.accountBinding;
   if (!ACCOUNT_BINDING.test(accountBinding || "")) {
     throw new Error("A valid Extella account binding is required");
