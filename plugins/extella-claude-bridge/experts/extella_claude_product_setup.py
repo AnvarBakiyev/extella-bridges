@@ -386,11 +386,26 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
             "credentials": bool(handle) and os.path.isfile(os.path.join(MCP_DIR, handle + ".sh"))
             and bool(listed) and ("extella_" + handle) in (listed.stdout or ""),
             "bridge": port.isdigit(),
-            "verify": False,
         }
-        remaining = [step for step in ["install", "credentials", "bridge", "verify"] if not done[step]]
+        # "verify" is not a thing that gets done and stays done; it is a
+        # re-reading of the four above plus a live health check. Reporting it
+        # as a completed step meant reporting False even right after it had
+        # just returned ready, which is a status that contradicts the fact.
+        remaining = [step for step in ("install", "credentials", "bridge") if not done[step]]
+        healthy = False
+        if not remaining:
+            try:
+                with urllib.request.urlopen(
+                        "http://127.0.0.1:" + port + "/health", timeout=10) as response:
+                    health = json.loads(response.read(65536).decode("utf-8"))
+                healthy = (health.get("status") == "ok" and
+                           "claude" in health.get("providers", []))
+            except Exception:
+                healthy = False
         return result("success", "status_read", "Состояние установки прочитано.",
-                      completed=done, resume_from=(remaining[0] if remaining else "verify"),
+                      completed=done, bridge_healthy=healthy,
+                      resume_from=(remaining[0] if remaining else None),
+                      ready_to_verify=(not remaining and healthy),
                       plugin_version=str((plugin_entry or {}).get("version", ""))[:64])
 
     return result("error", "unsupported_step", "Установщик получил неизвестный этап.")

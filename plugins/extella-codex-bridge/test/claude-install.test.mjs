@@ -528,3 +528,25 @@ test("the authentication probe calls no model", async () => {
   assert.ok(source.includes('mcp_authentication_proved_by="mcp_tools_call"'));
   assert.equal(source.includes('"-p"'), false);
 });
+
+// ── status must not contradict verify ──────────────────────────────────────
+
+test("status reports installable steps only, never verify as a done step", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  const statusBody = source.slice(source.indexOf('if action == "status"'));
+  // Reporting "verify": False right after verify returned ready is a status
+  // that contradicts the fact. Verify is a re-reading, not a stored step.
+  assert.equal(statusBody.includes('"verify": False'), false);
+  assert.ok(statusBody.includes('("install", "credentials", "bridge")'));
+  assert.ok(statusBody.includes("ready_to_verify"));
+  assert.ok(statusBody.includes("bridge_healthy"));
+});
+
+test("a fully installed host has nothing left to resume from", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  const statusBody = source.slice(source.indexOf('if action == "status"'));
+  // An earlier version answered "verify" here, which reads as unfinished work
+  // on a host where every step is already done.
+  assert.ok(statusBody.includes("resume_from=(remaining[0] if remaining else None)"));
+  assert.equal(statusBody.includes('else "verify")'), false);
+});
