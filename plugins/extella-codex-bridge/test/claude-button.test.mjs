@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  describeSource,
+  localSource,
+  pinnedSource,
+} from "../../extella-claude-bridge/scripts/set-marketplace-source.mjs";
 import test from "node:test";
 
 const CLAUDE_PLUGIN = resolve(import.meta.dirname, "..", "..", "extella-claude-bridge");
@@ -165,4 +170,53 @@ test("the Claude and Codex installers share no pinned identity", async () => {
   }
   assert.ok(claude.includes("extella:claude-connection:v1"));
   assert.equal(codex.includes("ETB.claudeInstaller"), false);
+});
+
+test("an unreadable install state stops, instead of restarting from scratch", async () => {
+  const source = await readFile(INSTALLER, "utf8");
+  const stateBody = source.slice(
+    source.indexOf("function installState("),
+    source.indexOf("function _writeConnectionState"),
+  );
+  // Answering STEPS[0] on failure meant a transient error silently re-ran
+  // install, credentials, and bridge on a host where all three were done —
+  // the blind repetition this path exists to prevent.
+  assert.equal(stateBody.includes("resumeFrom: STEPS[0]"), false);
+  assert.ok(stateBody.includes("unknown: true"));
+  assert.ok(stateBody.includes("resumeFrom: null"));
+
+  const installBody = source.slice(source.indexOf("function install(options)"));
+  assert.ok(installBody.includes("install_state_unknown"));
+  // Starting over remains possible, but only as an explicit decision.
+  assert.ok(installBody.includes("options.forceFullInstall !== true"));
+});
+
+// ── The published source must be pinned ────────────────────────────────────
+
+test("a marketplace source is either a local path or a pinned tag", () => {
+  assert.deepEqual(describeSource(localSource()),
+    { kind: "local", pinned: false, detail: "./plugins/extella-claude-bridge" });
+  assert.equal(describeSource(pinnedSource("v0.2.0")).pinned, true);
+  assert.equal(describeSource(pinnedSource("v0.2.0-rc.1")).pinned, true);
+
+  // `claude plugin marketplace add` has no --ref flag, so pinning lives in the
+  // manifest. A branch satisfies the schema and gives a floating source.
+  for (const floating of ["main", "HEAD", "release"]) {
+    assert.throws(() => pinnedSource(floating), /floating source/, `${floating} must be refused`);
+  }
+  for (const bad of [{ source: "github", owner: "x", repo: "y", ref: "main" },
+                     { source: "github", owner: "x", repo: "y" },
+                     "plugins/extella-claude-bridge",
+                     null]) {
+    assert.equal(describeSource(bad).kind, "invalid");
+  }
+});
+
+test("the shipped manifest declares a source this project accepts", async () => {
+  const manifest = JSON.parse(
+    await readFile(resolve(CLAUDE_PLUGIN, "..", "..", ".claude-plugin", "marketplace.json"), "utf8"),
+  );
+  const plugin = manifest.plugins.find((entry) => entry.name === "extella-claude-bridge");
+  assert.ok(plugin, "the plugin must be listed");
+  assert.notEqual(describeSource(plugin.source).kind, "invalid");
 });

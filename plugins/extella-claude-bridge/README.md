@@ -20,7 +20,15 @@ would become a competing local canon.
 
 For local validation the marketplace entry uses a relative `source`. At publish
 time it becomes a pinned git source, because `claude plugin marketplace add`
-has no `--ref` flag — unlike the Codex CLI, pinning lives in the manifest:
+has no `--ref` flag — unlike the Codex CLI, pinning lives in the manifest.
+`scripts/set-marketplace-source.mjs` performs the switch and refuses a branch:
+
+```bash
+node scripts/set-marketplace-source.mjs --check      # what is declared now
+node scripts/set-marketplace-source.mjs --tag v0.2.0 # publish form
+node scripts/set-marketplace-source.mjs --local      # back to the local path
+```
+
 
 ```json
 {

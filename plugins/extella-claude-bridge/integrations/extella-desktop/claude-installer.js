@@ -635,9 +635,14 @@ ETB.claudeInstaller = (function () {
           pluginVersion: value.plugin_version || ''
         };
       })
-      .catch(function () {
-        return { completed: {}, resumeFrom: STEPS[0], readyToVerify: false,
-                 bridgeHealthy: false, pluginVersion: '' };
+      .catch(function (error) {
+        // An unreadable state is not the same as a fresh host. Answering
+        // STEPS[0] here meant a transient failure silently re-ran install,
+        // credentials, and bridge on a machine where all three were already
+        // done — the blind repetition this path exists to prevent.
+        return { completed: {}, resumeFrom: null, readyToVerify: false,
+                 bridgeHealthy: false, pluginVersion: '', unknown: true,
+                 reason: (error && error.code) || 'status_unavailable' };
       });
   }
 
@@ -722,6 +727,14 @@ ETB.claudeInstaller = (function () {
       .then(function (state) {
         // Resume rather than repeat. A fresh host reports the first step; a
         // half-installed one reports the gap.
+        if (state.unknown && options.forceFullInstall !== true) {
+          var unknownError = new Error(
+            'Не удалось прочитать состояние установки. ' +
+            'Повторите позже или запустите установку заново явным решением.');
+          unknownError.code = 'install_state_unknown';
+          unknownError.reason = state.reason;
+          throw unknownError;
+        }
         if (state.resumeFrom && STEPS.indexOf(state.resumeFrom) > 0) {
           pending = STEPS.slice(STEPS.indexOf(state.resumeFrom));
         }
