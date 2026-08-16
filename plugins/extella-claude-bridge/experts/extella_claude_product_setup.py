@@ -5,6 +5,8 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     PLUGIN = "extella-claude-bridge@extella-claude"
     VALIDATE_URL = "https://api.extella.ai/api/token/validate"
     MCP_URL = "https://api.extella.ai/mcp/"
+    STORE_BASE = "https://os.extella.ai"
+    APP_NAME = "Разработка на Extella"
     HOME = os.path.expanduser("~")
     MCP_DIR = os.path.join(HOME, ".extella", "mcp")
 
@@ -185,6 +187,53 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
             return "refused"
         return "authorised" if isinstance(outcome, dict) else "inconclusive"
 
+    # Измерено 16.08.2026: переустановка версии с архивом не разложила его на
+    # диск — привязка осталась от прошлой распаковки. Полагаться на то, что
+    # кто-то другой доставит рантайм, значит оставить кнопку сломанной там, где
+    # этого не произошло. Магазин отдаёт архив по имени приложения, поэтому
+    # этап bridge доносит его сам и делает это идемпотентно.
+    def fetch_and_unpack_runtime(token_value, runtime_dir):
+        import io, zipfile, urllib.parse
+        query = urllib.parse.urlencode({"app": APP_NAME})
+        request = urllib.request.Request(
+            STORE_BASE + "/api/app-archive?" + query,
+            headers={"X-Extella-Token": token_value})
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                if response.status != 200:
+                    return "download_failed"
+                blob = response.read(64 * 1024 * 1024)
+        except Exception:
+            return "download_failed"
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(blob))
+        except Exception:
+            return "archive_invalid"
+        wanted = []
+        for name in archive.namelist():
+            if name.endswith("/"):
+                continue
+            # Имена из архива — данные, а не путь: абсолютный путь или "..",
+            # и распаковка пишет куда угодно за пределами каталога продукта.
+            if name.startswith("/") or ".." in name.split("/"):
+                return "archive_unsafe"
+            if name.startswith("scripts/") or name.startswith("schemas/") or name == "install.py":
+                wanted.append(name)
+        if not any(n.startswith("scripts/") for n in wanted):
+            return "archive_incomplete"
+        try:
+            for name in wanted:
+                target = os.path.join(runtime_dir, name)
+                os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+                with archive.open(name) as source:
+                    data = source.read()
+                descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(data)
+        except Exception:
+            return "unpack_failed"
+        return ""
+
     def handle_for(value):
         import hashlib
         digest = hashlib.sha256(("extella-mcp-account-v1." + value).encode("utf-8")).hexdigest()
@@ -309,6 +358,18 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         # раскладывается установщиком в ~/extella_claude_bridge.
         runtime_dir = os.path.join(HOME, "extella_claude_bridge")
         script = os.path.join(runtime_dir, "scripts", "configure-claude-bridge-macos.mjs")
+        if not os.path.isfile(script):
+            token = token_from_disk()
+            if len(token) < 8:
+                return result("error", "extella_token_unavailable",
+                              "Текущий аккаунт Extella недоступен: рантайм не скачать.")
+            problem = fetch_and_unpack_runtime(token, runtime_dir)
+            token = ""
+            if problem:
+                return result("error", "bridge_runtime_missing",
+                              "Локальная часть продукта не разложена и не скачалась. "
+                              "Переустановите приложение из магазина.",
+                              runtime_dir=runtime_dir, reason=problem)
         node = find("node")
         if not node:
             return result("error", "system_tools_missing", "На компьютере не найден node.")

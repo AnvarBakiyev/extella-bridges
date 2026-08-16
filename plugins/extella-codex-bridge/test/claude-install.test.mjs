@@ -652,3 +652,22 @@ test("the archive carries an honest installer and every runtime module", async (
   assert.ok(builder.includes("SECRET_SHAPES"));
   assert.ok(builder.includes("assertNoSecrets"));
 });
+
+test("the bridge step fetches its own runtime rather than assuming delivery", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  const code = source.split("\n").map((l) => l.replace(/#.*$/, "")).join("\n");
+  // Measured: reinstalling a version that carries an archive did not lay it
+  // out on disk. Assuming someone else delivers the runtime leaves the button
+  // broken wherever that did not happen.
+  assert.ok(code.includes("def fetch_and_unpack_runtime"));
+  assert.ok(code.includes("/api/app-archive?"));
+  assert.ok(code.includes('"X-Extella-Token"'));
+  // Archive member names are data, not paths: an absolute name or a ".."
+  // segment would write outside the product directory.
+  assert.ok(code.includes('name.startswith("/")'));
+  assert.ok(code.includes('".." in name.split("/")'));
+  assert.ok(code.includes("archive_unsafe"));
+  // Only the product's own directories are extracted.
+  assert.ok(code.includes('name.startswith("scripts/")'));
+  assert.ok(code.includes("0o600"));
+});
