@@ -420,9 +420,11 @@ async function main() {
     await launchctl(["bootout", domain, plistPath], { ignoreFailure: true });
     await launchctl(["disable", `${domain}/${LABEL}`], { ignoreFailure: true });
     const removed = [];
+    const unset = [];
     if (options.uninstall) {
       for (const name of plan.launchctl_variables_unset) {
         await launchctl(["unsetenv", name], { ignoreFailure: true });
+        unset.push(name);
       }
       for (const path of plan.files_removed) {
         try {
@@ -440,8 +442,10 @@ async function main() {
           status: options.uninstall ? "uninstalled" : "disabled",
           mode: plan.mode,
           service: LABEL,
-          removed,
-          retained: plan.files_retained,
+          // Same key names as the plan, so the two can be compared directly.
+          files_removed: removed,
+          launchctl_variables_unset: unset,
+          files_retained: plan.files_retained,
           model_called: false,
         },
         null,

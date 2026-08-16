@@ -550,3 +550,18 @@ test("a fully installed host has nothing left to resume from", async () => {
   assert.ok(statusBody.includes("resume_from=(remaining[0] if remaining else None)"));
   assert.equal(statusBody.includes('else "verify")'), false);
 });
+
+test("the removal result names things exactly as the plan does", async () => {
+  const source = await readFile(
+    resolve(CLAUDE_PLUGIN, "scripts", "configure-claude-bridge-macos.mjs"),
+    "utf8",
+  );
+  // The plan announced files_removed and launchctl_variables_unset while the
+  // result announced "removed" and nothing about variables, so the two could
+  // not be compared and the result under-reported what it had done.
+  const executed = source.slice(source.indexOf('status: options.uninstall ?'));
+  for (const key of ["files_removed:", "launchctl_variables_unset:", "files_retained:"]) {
+    assert.ok(executed.includes(key), `${key} must appear in the executed result`);
+  }
+  assert.equal(/\n\s+removed,\n/.test(executed), false);
+});
