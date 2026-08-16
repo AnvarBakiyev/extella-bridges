@@ -231,28 +231,32 @@ test("every Expert result is a JSON string and carries the cost contract", async
   for (const field of ['"model_called": False', '"agent_called": False', '"paid": False']) {
     assert.ok(source.includes(field), `${field} must be in every result`);
   }
-  // Every return in the body goes through result(...) or the payload builder.
-  for (const line of source.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("return ")) continue;
-    assert.ok(
-      /^return (result\(|json\.dumps\(|None|"" |""$|\(|agent_id|payload)/.test(trimmed) ||
-        trimmed.startsWith("return (probe.stdout") ||
-        trimmed.startsWith("return \"acct_\"") ||
-        trimmed.startsWith("return value") ||
-        trimmed.startsWith("return found") ||
-        trimmed.startsWith("return candidate") ||
-        trimmed.startsWith("return env") ||
-        trimmed.startsWith("return item") ||
-        trimmed.startsWith("return [item") ||
-        trimmed.startsWith("return payload.get") ||
-        trimmed.startsWith("return []") ||
-        trimmed.startsWith("return subprocess.run"),
-      `unexpected return shape: ${trimmed}`,
-    );
-  }
-});
 
+  // Checked by intent rather than by a whitelist of allowed return shapes:
+  // that list had to grow every time a helper was added, which made it a
+  // record of what exists instead of a statement about what must hold.
+  // What must hold is that every return reachable by a caller of a step goes
+  // through result(), and helpers are free to return whatever they need.
+  const stepBodies = source.split(/^    if action == /m).slice(1);
+  const actions = stepBodies.map((body) => body.match(/^"([a-z]+)"/)?.[1]);
+  // The five agreed steps, plus "status", which reports which of them are
+  // already done so a partially failed install can be resumed instead of
+  // blindly repeated.
+  for (const step of STEPS) assert.ok(actions.includes(step), `${step} must exist`);
+  assert.ok(actions.includes("status"));
+  for (const body of stepBodies) {
+    for (const line of body.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("return ")) continue;
+      assert.ok(
+        trimmed.startsWith("return result("),
+        `a step returned something other than result(): ${trimmed}`,
+      );
+    }
+  }
+  // The final fallthrough is a step result too.
+  assert.match(source, /return result\("error", "unsupported_step"/);
+});
 test("the Expert never signs in for the owner and never starts an agent", async () => {
   const source = await readFile(EXPERT_PATH, "utf8");
   // The remedy must be named to the owner, but never executed for them.
@@ -341,7 +345,7 @@ test("setup identifies the plugin by id and enablement, never by name", async ()
   // the ban is scoped to how the plugin itself is identified.
   const pluginLookup = source.slice(
     source.indexOf("def installed_plugin"),
-    source.indexOf("def handle_for"),
+    source.indexOf("def marketplace_rows"),
   );
   assert.equal(pluginLookup.includes('"name"'), false);
   assert.ok(source.includes('PLUGIN = "extella-claude-bridge@extella-claude"'));
@@ -482,4 +486,45 @@ test("the token file is never removed without a separate decision", () => {
   for (const path of plan.files_removed) {
     assert.equal(path.includes("/.extella/"), false, `${path} must not be removed`);
   }
+});
+
+// ── The MCP authentication probe ───────────────────────────────────────────
+
+test("verification probes with a tool that is small and discriminating", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // list_agents was the obvious probe and the wrong one: tens of kilobytes,
+  // so a bounded read truncated the JSON and a working connection looked
+  // unauthorised. get_current_profile_and_agent answers identically with and
+  // without a token, so it proves nothing.
+  assert.ok(source.includes('"name": "list_profiles"'));
+  assert.equal(source.includes('"name": "list_agents"'), false);
+  assert.equal(source.includes('"name": "get_current_profile_and_agent"'), false);
+});
+
+test("an unreadable probe response is inconclusive, never a refusal", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // Reporting "unauthorised" for a truncated envelope sends the owner hunting
+  // for a credential problem that may not exist.
+  assert.ok(source.includes('return "inconclusive"'));
+  assert.ok(source.includes("mcp_probe_inconclusive"));
+  assert.ok(source.includes("mcp_authentication_failed"));
+  assert.ok(source.includes('probe == "refused"'));
+  assert.ok(source.includes('probe != "authorised"'));
+});
+
+test("the probe parses the JSON-RPC envelope instead of scanning for words", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // The account payload legitimately contains the word "error" inside agent
+  // data, so a substring scan reported a working connection as unauthorised.
+  assert.ok(source.includes('parsed.get("jsonrpc") == "2.0"'));
+  assert.equal(source.includes(`'"error"' in lowered`), false);
+  assert.equal(source.includes("raw.lower()"), false);
+});
+
+test("the authentication probe calls no model", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // The Expert is the MCP client here; nothing in this path consumes a plan.
+  assert.ok(source.includes("tools/call"));
+  assert.ok(source.includes('mcp_authentication_proved_by="mcp_tools_call"'));
+  assert.equal(source.includes('"-p"'), false);
 });

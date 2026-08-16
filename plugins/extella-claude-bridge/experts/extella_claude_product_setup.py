@@ -113,6 +113,78 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
             return [item for item in payload if isinstance(item, dict)]
         return payload.get("marketplaces") or []
 
+    # Measured 2026-08-14. Neither `initialize` nor `tools/list` can prove
+    # authentication: both answer HTTP 200 identically with a valid token, with
+    # no token, and with a deliberately wrong one, which is exactly why
+    # `claude mcp list` shows every server as connected. A `tools/call` is the
+    # first step that distinguishes them, and it needs no model — this Expert
+    # is the MCP client, so nothing here consumes a plan or an API budget.
+    #
+    # list_agents was the obvious probe and the wrong one: its reply is tens of
+    # kilobytes, so a bounded read truncated the JSON and a working connection
+    # looked unauthorised. get_current_profile_and_agent is small but answers
+    # identically with and without a token, so it proves nothing. list_profiles
+    # is both small and discriminating: measured 638 bytes authorised against
+    # 204 bytes refused.
+    def mcp_probe(helper_path):
+        try:
+            completed = subprocess.run([helper_path], stdout=subprocess.PIPE,
+                                       stderr=subprocess.DEVNULL, text=True,
+                                       timeout=20, shell=False)
+            headers = json.loads(completed.stdout or "{}")
+        except Exception:
+            return "inconclusive"
+        if not isinstance(headers, dict) or not headers.get("X-Auth-Token"):
+            return "refused"
+        base = {"Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json"}
+
+        def rpc(method, params, session=None, rid=1):
+            body = json.dumps({"jsonrpc": "2.0", "id": rid,
+                               "method": method, "params": params}).encode("utf-8")
+            merged = dict(base)
+            merged.update(headers)
+            if session:
+                merged["Mcp-Session-Id"] = session
+            request = urllib.request.Request(MCP_URL, data=body, method="POST",
+                                             headers=merged)
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read(262144).decode("utf-8", "replace"), \
+                    response.headers.get("Mcp-Session-Id")
+
+        try:
+            _, session = rpc("initialize", {
+                "protocolVersion": "2025-06-18", "capabilities": {},
+                "clientInfo": {"name": "extella-claude-setup", "version": "1"}})
+            raw, _ = rpc("tools/call",
+                         {"name": "list_profiles", "arguments": {}},
+                         session=session, rid=2)
+        except Exception:
+            return "inconclusive"
+        # Parse the envelope instead of scanning for substrings: the account
+        # payload legitimately contains the word "error" inside agent data, and
+        # a naive scan reported a working connection as unauthorised.
+        payload = None
+        for line in raw.splitlines():
+            line = line.strip()
+            candidate = line[5:].strip() if line.startswith("data:") else line
+            if not candidate.startswith("{"):
+                continue
+            try:
+                parsed = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and parsed.get("jsonrpc") == "2.0":
+                payload = parsed
+        # An unreadable envelope is not evidence of refusal. Saying so would
+        # send the owner hunting for a credential problem that may not exist.
+        if not isinstance(payload, dict):
+            return "inconclusive"
+        outcome = payload.get("result")
+        if "error" in payload or (isinstance(outcome, dict) and outcome.get("isError") is True):
+            return "refused"
+        return "authorised" if isinstance(outcome, dict) else "inconclusive"
+
     def handle_for(value):
         import hashlib
         digest = hashlib.sha256(("extella-mcp-account-v1." + value).encode("utf-8")).hexdigest()
@@ -262,6 +334,16 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                 "account" not in health.get("authorization_scopes", []) or
                 health.get("default_execution_profile_id") != "answer-only"):
             return result("error", "bridge_verification_failed", "Локальный мост Claude не подтвердил режим account-wide.")
+        helper_path = os.path.join(MCP_DIR, handle + ".sh")
+        if not os.path.isfile(helper_path):
+            return result("error", "mcp_connection_missing", "Соединение Extella MCP не настроено.")
+        probe = mcp_probe(helper_path)
+        if probe == "refused":
+            return result("error", "mcp_authentication_failed",
+                          "Соединение Extella MCP не проходит авторизацию.")
+        if probe != "authorised":
+            return result("error", "mcp_probe_inconclusive",
+                          "Не удалось подтвердить авторизацию соединения Extella MCP.")
         listed = run([claude, "mcp", "list"], timeout=60)
         # Presence only. The connected label in this output is not evidence of
         # authentication; the binding above is what proves the account.
@@ -273,6 +355,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                       authorization_scope="account", live_enabled=True,
                       bridge_port=int(port), mcp_server="extella_" + handle,
                       account_binding_proved_by="token_validate",
+                      mcp_authentication_proved_by="mcp_tools_call",
                       execution_policy_version=health.get("execution_policy_version"),
                       default_execution_profile_id=health.get("default_execution_profile_id"))
 
@@ -284,6 +367,16 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         token = token_from_disk()
         handle = handle_for(token) if len(token) >= 8 else ""
         token = ""
+        helper_path = os.path.join(MCP_DIR, handle + ".sh")
+        if not os.path.isfile(helper_path):
+            return result("error", "mcp_connection_missing", "Соединение Extella MCP не настроено.")
+        probe = mcp_probe(helper_path)
+        if probe == "refused":
+            return result("error", "mcp_authentication_failed",
+                          "Соединение Extella MCP не проходит авторизацию.")
+        if probe != "authorised":
+            return result("error", "mcp_probe_inconclusive",
+                          "Не удалось подтвердить авторизацию соединения Extella MCP.")
         listed = run([claude, "mcp", "list"], timeout=60)
         port_probe = run(["/bin/launchctl", "getenv", "EXTELLA_CLAUDE_BRIDGE_PORT"], timeout=20)
         port = (port_probe.stdout or "").strip() if port_probe else ""
