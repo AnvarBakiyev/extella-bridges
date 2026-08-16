@@ -45,16 +45,22 @@ function candidateDevices(searchResult) {
   return devices;
 }
 
-// Проба безмодельная: `status` установочного Expert читает состояние и ничего
-// не запускает. Целью считается только та машина, где мост уже отвечает, —
-// «устройство доступно» и «мост на нём поднят» это разные утверждения.
-function isBridgeHealthy(statusResult) {
-  const payload = unwrap(statusResult);
-  return (
-    payload?.status === "success" &&
-    payload?.bridge_healthy === true &&
-    payload?.completed?.bridge === true
-  );
+// Проба безмодельная и не требует второго Expert: мост сам себе индикатор.
+// Пустой prompt отсекается ПОСЛЕ проверки моста, поэтому ответ различает
+// машины. Измерено 16.08.2026:
+//   облачный контейнер → bridge_not_configured
+//   MacBook с мостом   → invalid_prompt
+// Первая редакция резолвера пробовала `status` установочного Expert, но он не
+// глобальный — вызов отвечал «Expert not found» с любой целью, то есть проба
+// не могла отличить ничего.
+const NOT_CONFIGURED = "bridge_not_configured";
+
+function isBridgeConfigured(probeResult) {
+  const payload = unwrap(probeResult);
+  if (!payload || typeof payload.code !== "string") return false;
+  // Ровно один код означает «моста здесь нет». Любой другой ответ моста —
+  // включая отказ по пустому промпту — доказывает, что он ответил.
+  return payload.code !== NOT_CONFIGURED;
 }
 
 // H17: шлюз и ядро заворачивают ответ независимо, а Python-словарь приезжает
@@ -84,7 +90,7 @@ function unwrap(value) {
  *
  * @param {object} platform
  *   searchTargets({query, global, limit}) -> {targets: [...]}
- *   runStatus(deviceId) -> результат `status` установочного Expert на этой цели
+ *   probeBridge(deviceId) -> результат вызова моста с пустым prompt
  * @returns {Promise<string>} device_id, который не сохраняется вызывающим
  */
 async function resolveBridgeTarget(platform, { limit = 10 } = {}) {
@@ -105,14 +111,14 @@ async function resolveBridgeTarget(platform, { limit = 10 } = {}) {
   let checked = 0;
   for (const device of candidates) {
     checked += 1;
-    let status;
+    let probe;
     try {
-      status = await platform.runStatus(device);
+      probe = await platform.probeBridge(device);
     } catch {
       // Недоступная в этот момент цель — не повод останавливать перебор.
       continue;
     }
-    if (isBridgeHealthy(status)) return device;
+    if (isBridgeConfigured(probe)) return device;
   }
   // Кандидаты были, но ни на одном мост не отвечает. Это другое состояние, чем
   // «целей нет», и владельцу оно говорит другое: ставить, а не искать.
@@ -123,7 +129,8 @@ export {
   TARGET_QUERY,
   TargetResolutionError,
   candidateDevices,
-  isBridgeHealthy,
+  NOT_CONFIGURED,
+  isBridgeConfigured,
   isDeviceId,
   resolveBridgeTarget,
   unwrap,

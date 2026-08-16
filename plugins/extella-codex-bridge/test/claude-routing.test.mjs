@@ -6,7 +6,7 @@ import test from "node:test";
 import {
   TargetResolutionError,
   candidateDevices,
-  isBridgeHealthy,
+  isBridgeConfigured,
   resolveBridgeTarget,
   unwrap,
 } from "../../extella-claude-bridge/scripts/target-resolver.mjs";
@@ -17,16 +17,20 @@ const MAC = "55555555-5555-4555-8555-555555555555";
 const CLOUD = "66666666-6666-4666-8666-666666666666";
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
-function statusPayload({ healthy }) {
+// Measured replies to a probe with an empty prompt. The bridge is its own
+// indicator: the empty prompt is rejected AFTER the bridge check, so the two
+// machines answer differently without a model and without a second Expert.
+function probePayload({ configured }) {
   // Both envelopes, as the gateway and the core deliver them.
   return {
     result: {
-      result: JSON.stringify({
-        status: "success",
-        code: "status_read",
-        completed: { preflight: true, credentials: true, bridge: healthy },
-        bridge_healthy: healthy,
-      }),
+      result: JSON.stringify(
+        configured
+          ? { status: "error", code: "invalid_prompt",
+              message: "prompt must contain 1..4000 characters" }
+          : { status: "error", code: "bridge_not_configured",
+              message: "Local Claude bridge is not configured" },
+      ),
     },
   };
 }
@@ -36,10 +40,10 @@ function platform({ targets, healthyDevice = null, failOn = [] }) {
   return {
     asked,
     searchTargets: async () => ({ targets }),
-    runStatus: async (device) => {
+    probeBridge: async (device) => {
       asked.push(device);
       if (failOn.includes(device)) throw new Error("device unreachable");
-      return statusPayload({ healthy: device === healthyDevice });
+      return probePayload({ configured: device === healthyDevice });
     },
   };
 }
@@ -78,6 +82,10 @@ test("the rule forbids the fallback that Codex V4 prescribes", async () => {
   assert.ok(rule.includes("НИКОГДА не вызывай run_expert без targets"));
   assert.ok(rule.includes("search_targets"));
   assert.ok(rule.includes("targets=[device_id]"));
+  // The probe is part of the fallback: a reachable device is not a device
+  // carrying the bridge.
+  assert.ok(rule.includes("пустым prompt"));
+  assert.ok(rule.includes("трёх шагов"));
   assert.ok(rule.includes("разрешай цель заново"));
   assert.ok(rule.includes("bridge_not_configured"));
   // The direct tool is the primary path, and the reason is stated.
@@ -142,18 +150,20 @@ test("no candidates and no bridge are different failures", async () => {
   await assert.rejects(
     resolveBridgeTarget({
       searchTargets: async () => { throw new Error("offline"); },
-      runStatus: async () => ({}),
+      probeBridge: async () => ({}),
     }),
     (error) => error.code === "target_search_failed",
   );
 });
 
-test("health is read from the payload, not assumed from a reply arriving", () => {
-  assert.equal(isBridgeHealthy(statusPayload({ healthy: true })), true);
-  assert.equal(isBridgeHealthy(statusPayload({ healthy: false })), false);
+test("the probe reads the payload, and only one code means no bridge", () => {
+  assert.equal(isBridgeConfigured(probePayload({ configured: true })), true);
+  assert.equal(isBridgeConfigured(probePayload({ configured: false })), false);
+  // An earlier resolver probed the setup Expert, which is not global: every
+  // target answered "Expert not found", so the probe distinguished nothing.
+  assert.equal(isBridgeConfigured({ result: JSON.stringify({ status: "error" }) }), false);
   // H17: a Python repr must not be guessed at.
-  assert.equal(isBridgeHealthy({ result: "{'bridge_healthy': True}" }), false);
-  assert.equal(isBridgeHealthy({ result: JSON.stringify({ status: "error" }) }), false);
+  assert.equal(isBridgeConfigured({ result: "{'code': 'invalid_prompt'}" }), false);
   assert.equal(unwrap({ result: { result: '{"a":1}' } }).a, 1);
   assert.equal(unwrap("not json"), null);
 });
