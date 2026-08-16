@@ -135,8 +135,8 @@ function embeddedSteps(source) {
 test("the routing rule is Claude-specific and forbids run_agent", async () => {
   const source = await readFile(INSTALLER, "utf8");
   // Evaluate the declarations rather than grepping the file: the rule is a
-  // multi-line concatenation, so phrases like "Never use run_agent" are split
-  // across string literals and a substring search silently misses them.
+  // multi-line concatenation, so phrases are split across string literals and
+  // a substring search silently misses them.
   const declarations = source.slice(
     source.indexOf("var ROUTING_RULE_MARKER"),
     source.indexOf("var _running"),
@@ -145,17 +145,36 @@ test("the routing rule is Claude-specific and forbids run_agent", async () => {
 
   assert.ok(rule.startsWith("EXTELLA_CLAUDE_ROUTING_V1:"));
   assert.ok(rule.includes("extella_claude_account_bridge_v1"));
-  // A marker or Expert name shared with the Codex rule would let one route's
-  // mode flip the other's.
   assert.equal(rule.includes("EXTELLA_CODEX_ROUTING"), false);
   assert.equal(rule.includes("extella_codex_account_bridge"), false);
-  assert.ok(rule.includes("Never use run_agent"));
-  assert.ok(rule.includes("never start another Extella agent"));
-  assert.ok(rule.includes("Never reuse a conversation_id from another chat"));
+
+  // Measured on a live agent: it called run_expert without global=true and the
+  // platform answered "Expert not found", though the Expert exists and is
+  // visible from every scope. The first edition mentioned the flag mid-
+  // paragraph after "otherwise"; it now leads, and the recovery is named.
+  // The flag must sit in the sentence that names the call, not merely early in
+  // the text: a first edition that only warned about it further down is what
+  // the agent skipped. Removing it from that sentence must fail this test.
+  const callSentence = rule.split(". ").find((part) => part.includes("run_expert"));
+  assert.ok(callSentence, "the rule must name the call form");
+  assert.ok(callSentence.includes("global=true"),
+    "global=true must be in the same sentence as the call form");
+  // Both refusals the platform actually produces must be named with their
+  // remedy: the wrong scope, and the wrong machine.
+  const refusals = rule.slice(rule.indexOf("ОТКАЗЫ"));
+  assert.ok(refusals.includes("Expert not found"));
+  assert.ok(refusals.includes("повтори тот же вызов с global=true"));
+  assert.ok(refusals.includes("bridge_not_configured"));
+  assert.ok(refusals.includes("разреши цель"));
+  // A cloud agent on a Claude model is not the local bridge.
+  assert.ok(rule.includes("другого агента на модели Claude"));
+
+  assert.ok(rule.includes("run_agent"));
+  assert.ok(rule.includes("не запускай второго агента"));
+  assert.ok(rule.includes("не переиспользуй conversation_id из другого"));
   assert.ok(rule.includes('execution_profile_id="answer-only"'));
-  assert.ok(rule.includes("Never pass raw runtime"));
-});
-test("the Claude and Codex installers share no pinned identity", async () => {
+  assert.ok(rule.includes("сырые флаги рантайма"));
+});test("the Claude and Codex installers share no pinned identity", async () => {
   const [claude, codex] = await Promise.all([
     readFile(INSTALLER, "utf8"),
     readFile(

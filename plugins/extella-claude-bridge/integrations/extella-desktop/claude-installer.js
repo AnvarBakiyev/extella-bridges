@@ -24,30 +24,58 @@ ETB.claudeInstaller = (function () {
   var LONG_STEPS = { install: true, bridge: true };
 
   var ROUTING_RULE_MARKER = 'EXTELLA_CLAUDE_ROUTING_V1';
+  // Правило Codex V4 предписывает запасной путь «нет прямого инструмента —
+  // run_expert без targets». Замер показал, что этот вызов уходит в облачный
+  // контейнер без launchctl, и мост оттуда честно отвечает bridge_not_configured
+  // (см. DEFECTS.md, D3). Поэтому здесь он не копируется: запасной путь обязан
+  // сначала разрешить цель и никогда не вызывать run_expert без неё.
+  //
+  // Идентификатора устройства в правиле нет и быть не должно: устройства
+  // перерегистрируются, и зашитый UUID пережил бы своё устройство молча.
   var ROUTING_RULE_TEXT = ROUTING_RULE_MARKER +
-    ': Claude mode is inactive by default. A one-off request to call or consult ' +
-    'Claude must call Claude once and must not activate continuous mode. When the ' +
-    'user explicitly asks to start, enter, or switch to a continuous Claude ' +
-    'dialogue, call Claude and, after a successful call, treat Claude mode as ' +
-    'active in this Extella chat. While Claude mode is active, route every later ' +
-    'user message directly to Claude without requiring the user to mention Claude ' +
-    'again, always reusing the conversation_id returned in this same chat. When ' +
-    'the user asks to stop, exit, or return from Claude mode, do not send that ' +
-    'command to Claude; deactivate the mode and reply locally. If no ' +
-    'conversation_id exists in this chat, omit it so the bridge creates a new ' +
-    'Claude session. Never reuse a conversation_id from another chat and never ' +
-    'summarize or truncate the Claude session history. For every bridge call, use ' +
-    'extella_claude_account_bridge_v1 directly when available; otherwise call ' +
-    'run_expert with name="extella_claude_account_bridge_v1", global=true, and ' +
-    'params containing prompt, the current conversation_id, and ' +
-    'execution_profile_id. Use execution_profile_id="answer-only" unless the user ' +
-    'explicitly selects another profile that the bridge reports as available. A ' +
-    'saved conversation_id must always keep its original execution_profile_id; to ' +
-    'change profiles, start a new Claude conversation. Never pass raw runtime, ' +
-    'tool, retry, filesystem, network, or shell flags through the Expert. Never ' +
-    'use run_agent, never start another Extella agent, and do not call get_expert ' +
-    'or search_experts first. Do not call Claude unless the user explicitly asks ' +
-    'or Claude mode is already active in this chat.';
+    ': ВЫЗОВ CLAUDE. Основной путь: вызывай инструмент ' +
+    'extella_claude_account_bridge_v1 напрямую — он подключён к агенту, и такой ' +
+    'вызов исполняется в контексте цели этого чата. Это единственный путь, ' +
+    'который не требует выбирать устройство вручную. ' +
+    'ЗАПАСНОЙ ПУТЬ, только если прямого инструмента у тебя нет. Он состоит из ' +
+    'двух шагов, и первый пропускать нельзя. Шаг 1: найди цель — search_targets ' +
+    'по описанию рабочего листенера на машине пользователя, возьми записи с ' +
+    'available=true и получи их device_id. Шаг 2: вызови run_expert с ' +
+    'name="extella_claude_account_bridge_v1", global=true и targets=[device_id] ' +
+    'найденной цели. НИКОГДА не вызывай run_expert без targets: такой вызов ' +
+    'уходит на цель по умолчанию, у которой нет локального моста, и вернёт ' +
+    'bridge_not_configured. Если целей несколько, пробуй по очереди и бери ту, ' +
+    'которая ответила успешно. Никогда не запоминай device_id между вызовами и ' +
+    'не подставляй его из прошлых сообщений: устройство перерегистрируется, ' +
+    'разрешай цель заново каждый раз. ' +
+    'ОТКАЗЫ. "Expert not found" означает, что искали не в том скоупе: повтори ' +
+    'тот же вызов с global=true. bridge_not_configured означает, что вызов ушёл ' +
+    'не на ту машину: вернись к шагу 1 и разреши цель. Никогда не подставляй ' +
+    'вместо моста другого агента на модели Claude: локальный мост и облачный ' +
+    'Claude-агент — разные вещи, и пользователь просит именно мост. Не вызывай ' +
+    'get_expert или search_experts заранее. ' +
+    'ПАРАМЕТРЫ: prompt, conversation_id текущего чата, execution_profile_id. ' +
+    'Используй execution_profile_id="answer-only", если пользователь явно не ' +
+    'выбрал другой профиль, о котором мост сообщил как о доступном. Сохранённый ' +
+    'conversation_id всегда сохраняет свой исходный execution_profile_id; чтобы ' +
+    'сменить профиль, начни новый разговор с Claude. Никогда не передавай через ' +
+    'Expert сырые флаги рантайма, инструментов, повторов, файловой системы, сети ' +
+    'или оболочки. ' +
+    'РЕЖИМ. По умолчанию режим Claude выключен. Разовая просьба вызвать или ' +
+    'спросить Claude выполняет один вызов и режим не включает. Когда ' +
+    'пользователь явно просит начать, войти или перейти в непрерывный диалог с ' +
+    'Claude, вызови Claude и после успешного вызова считай режим Claude активным ' +
+    'в этом чате. Пока режим активен, направляй каждое следующее сообщение ' +
+    'пользователя прямо в Claude, не требуя упоминать Claude снова, и всегда ' +
+    'переиспользуй conversation_id, полученный в этом же чате. Когда пользователь ' +
+    'просит остановить, выйти или вернуться из режима Claude, не отправляй эту ' +
+    'команду в Claude: выключи режим и ответь сам. ' +
+    'ГРАНИЦЫ. Если conversation_id в этом чате ещё нет, опусти его — мост создаст ' +
+    'новую сессию Claude. Никогда не переиспользуй conversation_id из другого ' +
+    'чата и никогда не сокращай и не пересказывай историю сессии Claude. Никогда ' +
+    'не используй run_agent и не запускай второго агента Extella. Не вызывай ' +
+    'Claude, если пользователь явно не попросил или режим Claude в этом чате не ' +
+    'активен.';
 
   var _running = false;
 
@@ -688,6 +716,65 @@ ETB.claudeInstaller = (function () {
         });
         if (!found) throw new Error('Проверка глобального правила вызова Claude не прошла.');
       });
+  }
+
+  // Публичные системные агенты — общие платформенные объекты: Extella
+  // правомерно игнорирует аккаунтные правки их инструментов. Они и не нужны:
+  // у них есть системный Extella MCP, через который виден account-global
+  // Expert. Менять их — значит писать в чужое живое.
+  function _canRunGlobalExpert(tools) {
+    return tools.indexOf('run_expert') !== -1 ||
+      tools.indexOf('run_expert_mcp_extella') !== -1 ||
+      tools.indexOf('sys__all__sys_mcp_extella') !== -1 ||
+      tools.indexOf('sys__server__sys_mcp_extella') !== -1;
+  }
+
+  function _agentDetail(response) {
+    var value = response && response.content ? response.content : response;
+    return (value && value.agent) || value || {};
+  }
+
+  // Прямой инструмент — основной путь именно потому, что такой вызов
+  // исполняется в контексте цели чата. run_expert без targets уходит на цель
+  // по умолчанию, у которой локального моста нет (DEFECTS.md, D3).
+  function _attachBridgeTool(agentId) {
+    var bridge = ETB.claudeAccountBridge;
+    return ETB.api.agentGetScoped(agentId).then(function (before) {
+      var detail = _agentDetail(before);
+      if (!Array.isArray(detail.tools)) {
+        throw new Error('Extella не вернула список tools агента ' + agentId + '.');
+      }
+      var tools = detail.tools.map(String);
+      var isPublic = detail.isPublic === true || detail.is_public === true;
+      if (tools.indexOf(bridge.name) !== -1) {
+        return { agentId: agentId, added: false, viaSystemMcp: false };
+      }
+      if (isPublic) {
+        // Не пытаемся править публичного агента: правка не закрепится, а
+        // «применили» без перечитки — это ложная зелень.
+        if (_canRunGlobalExpert(tools)) {
+          return { agentId: agentId, added: false, viaSystemMcp: true };
+        }
+        throw new Error('Публичный агент ' + agentId + ' не видит Extella MCP.');
+      }
+      return ETB.api.agentToolsUpdateScoped(agentId, tools.concat([bridge.name]))
+        .then(function (updated) {
+          if (updated && updated.status === 'error') {
+            throw new Error(updated.message || 'Не удалось подключить Claude к агенту.');
+          }
+          return ETB.api.agentGetScoped(agentId);
+        })
+        .then(function (after) {
+          // Читаем обратно: платформа пишет одним набором полей, а отдаёт
+          // другим, и проверка по флагу ответа всегда зелёная.
+          var saved = _agentDetail(after);
+          var savedTools = Array.isArray(saved.tools) ? saved.tools.map(String) : [];
+          if (savedTools.indexOf(bridge.name) === -1) {
+            throw new Error('Extella не сохранила tool Claude у агента ' + agentId + '.');
+          }
+          return { agentId: agentId, added: true, viaSystemMcp: false };
+        });
+    });
   }
 
   function _runStep(targetScope, step, marketplacePath) {
