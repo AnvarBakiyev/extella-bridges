@@ -83,6 +83,40 @@ test("the secret variable name is validated, not taken on trust", () => {
   }
 });
 
+// ── The secret pointer is not itself a secret ──────────────────────────────
+
+test("the scrub spares the secret pointer and the variable it names", async () => {
+  const { scrubCredentialEnvironment } = await import("../scripts/bridge-entry.mjs");
+  const environment = {
+    PATH: "/usr/bin",
+    EXTELLA_BRIDGE_SECRET_NAME: SECRET_VARIABLE,
+    [SECRET_VARIABLE]: "z".repeat(64),
+    EXTELLA_API_TOKEN: "must be removed",
+    ANTHROPIC_API_KEY: "must be removed",
+  };
+  const removed = scrubCredentialEnvironment(environment);
+
+  // Measured on the first live install attempt: the pointer matches the
+  // SECRET pattern, so it was being scrubbed along with real credentials. The
+  // server then fell back to the default variable, which the LaunchAgent had
+  // deliberately unset, and the service died at startup.
+  assert.equal(environment.EXTELLA_BRIDGE_SECRET_NAME, SECRET_VARIABLE);
+  assert.equal(environment[SECRET_VARIABLE], "z".repeat(64));
+  assert.deepEqual(removed, ["ANTHROPIC_API_KEY", "EXTELLA_API_TOKEN"]);
+});
+
+test("a pointer naming something that is not a secret variable is ignored", async () => {
+  const { scrubCredentialEnvironment } = await import("../scripts/bridge-entry.mjs");
+  const environment = {
+    EXTELLA_BRIDGE_SECRET_NAME: "PATH",
+    EXTELLA_API_TOKEN: "must be removed",
+  };
+  scrubCredentialEnvironment(environment);
+  // The pointer is validated where it is read; sparing an arbitrary name here
+  // would let it nominate any variable as untouchable.
+  assert.equal(environment.EXTELLA_API_TOKEN, undefined);
+});
+
 // ── The LaunchAgent file must never carry a secret ─────────────────────────
 
 test("the LaunchAgent names the secret variable and never contains its value", () => {
