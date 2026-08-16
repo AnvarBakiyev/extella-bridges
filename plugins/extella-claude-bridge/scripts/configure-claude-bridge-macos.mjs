@@ -13,6 +13,7 @@
 import { execFile } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
+import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -21,15 +22,17 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-// PoC co-location: the runtime modules still live in the Codex plugin so the
-// existing bundle test keeps guarding the module graph. They move once the
-// shared-core refactor is approved.
-const RUNTIME_SOURCE_DIR = resolve(
-  SCRIPT_DIR,
-  "..",
-  "..",
-  "extella-codex-bridge",
-);
+// Two layouts, and the difference is not cosmetic. Shipped to a buyer this
+// script arrives inside the listing archive, beside the runtime it installs;
+// in the repository it sits in the Claude plugin while the runtime still lives
+// in the Codex one. Resolving this from the script's own position means the
+// same file works in both, instead of assuming a checkout that a buyer's
+// machine does not have.
+const ARCHIVE_ROOT = resolve(SCRIPT_DIR, "..");
+const REPO_ROOT = resolve(SCRIPT_DIR, "..", "..", "extella-codex-bridge");
+const RUNTIME_SOURCE_DIR = existsSync(join(ARCHIVE_ROOT, "scripts", "bridge-core.mjs"))
+  ? ARCHIVE_ROOT
+  : REPO_ROOT;
 
 const LABEL = "ai.extella.claude-bridge";
 const SECRET_VARIABLE = "EXTELLA_CLAUDE_BRIDGE_SECRET";

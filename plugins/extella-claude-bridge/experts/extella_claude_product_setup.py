@@ -304,11 +304,19 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                       mcp_server=server, account_handle=handle)
 
     if action == "bridge":
-        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                              "scripts", "configure-claude-bridge-macos.mjs")
+        # `__file__` не существует в Fython, и даже с ним каталога рядом нет:
+        # Expert — запись в базе. Рантайм приезжает архивом листинга и
+        # раскладывается установщиком в ~/extella_claude_bridge.
+        runtime_dir = os.path.join(HOME, "extella_claude_bridge")
+        script = os.path.join(runtime_dir, "scripts", "configure-claude-bridge-macos.mjs")
         node = find("node")
-        if not node or not os.path.isfile(script):
-            return result("error", "bridge_script_unavailable", "Не найден проверенный установщик локального моста Claude.")
+        if not node:
+            return result("error", "system_tools_missing", "На компьютере не найден node.")
+        if not os.path.isfile(script):
+            return result("error", "bridge_runtime_missing",
+                          "Локальная часть продукта не разложена. Переустановите приложение "
+                          "из магазина: рантайм моста приезжает архивом.",
+                          runtime_dir=runtime_dir)
         configured = run([node, script, "--account-wide",
                           "--confirm-account-scope", "I_UNDERSTAND_ALL_AGENTS",
                           "--capability", "general-assistance",

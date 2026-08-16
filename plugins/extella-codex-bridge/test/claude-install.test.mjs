@@ -596,3 +596,59 @@ test("readiness never depends on the plugin being installed", async () => {
   assert.ok(verifyBody.includes('account_binding_proved_by="token_validate"'));
   assert.ok(verifyBody.includes('mcp_authentication_proved_by="mcp_tools_call"'));
 });
+
+// ── The runtime reaches a buyer through the listing archive ────────────────
+
+test("the bridge step looks for the runtime where the archive puts it", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // The first shipped version resolved this through __file__, which does not
+  // exist in Fython — and even with it there is no directory beside an Expert,
+  // because an Expert is a database record. It was only ever exercised from a
+  // checkout, so it could not have worked on any buyer's machine.
+  // Comments are stripped first: the explanation of the trap is not the trap.
+  // This is the third assertion in this suite to match its own prose.
+  const code = source.split("\n").map((line) => line.replace(/#.*$/, "")).join("\n");
+  assert.equal(code.includes("__file__"), false);
+  assert.ok(code.includes('os.path.join(HOME, "extella_claude_bridge")'));
+  // A missing runtime names the remedy instead of reporting a missing script.
+  assert.ok(source.includes("bridge_runtime_missing"));
+  assert.ok(source.includes("приезжает архивом"));
+});
+
+test("the service installer resolves its runtime from its own position", async () => {
+  const source = await readFile(
+    resolve(CLAUDE_PLUGIN, "scripts", "configure-claude-bridge-macos.mjs"), "utf8");
+  // Shipped, this script sits inside the archive beside the runtime; in the
+  // repository the runtime is still in the Codex plugin. One file, both
+  // layouts, no assumption of a checkout.
+  assert.ok(source.includes("const ARCHIVE_ROOT"));
+  assert.ok(source.includes("const REPO_ROOT"));
+  assert.match(source, /existsSync\(join\(ARCHIVE_ROOT, "scripts", "bridge-core\.mjs"\)\)/);
+});
+
+test("the archive carries an honest installer and every runtime module", async () => {
+  const installer = await readFile(
+    resolve(CLAUDE_PLUGIN, "archive", "install.py"), "utf8");
+  // B2: any input() is a hung purchase. B3: a zero exit on a real failure
+  // means the buyer is charged for a broken install.
+  assert.equal(installer.includes("input("), false);
+  assert.ok(installer.includes("sys.exit(code)"));
+  // B4: the panel and the Expert need to know which agent they belong to.
+  assert.ok(installer.includes("agent_binding.json"));
+  assert.ok(installer.includes("EXTELLA_AGENT_ID"));
+  // The installer must not start the service: that needs the account token and
+  // an explicit cost confirmation, which belong to the bridge step.
+  assert.ok(installer.includes('"service_started": False') ||
+            installer.includes('"service_started": false'));
+
+  const builder = await readFile(
+    resolve(CLAUDE_PLUGIN, "scripts", "build-archive.mjs"), "utf8");
+  for (const name of ["bridge-entry.mjs", "bridge-core.mjs", "adapter-claude.mjs",
+                      "claude-cli-contract.mjs", "configure-claude-bridge-macos.mjs"]) {
+    assert.ok(builder.includes(name), `${name} must be packaged`);
+  }
+  // B7: the archive travels to the buyer whole, so its contents are checked
+  // rather than assumed.
+  assert.ok(builder.includes("SECRET_SHAPES"));
+  assert.ok(builder.includes("assertNoSecrets"));
+});
