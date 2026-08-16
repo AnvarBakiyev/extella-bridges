@@ -218,10 +218,25 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                       claude_login_state="reported_signed_in")
 
     if action == "install":
+        # Плагин Claude Code — упаковочное удобство, а не рантайм. Измерено
+        # 15.08.2026: с полностью снесённым плагином и удалённым marketplace оба
+        # направления продолжают работать — MCP-соединение живо, мост отвечает.
+        # Направление A держится записью MCP, которую делает этап credentials;
+        # направление B — службой LaunchAgent, которую ставит этап bridge.
+        # Плагин намеренно не несёт ни mcpServers, ни userConfig: один набор
+        # userConfig не может представлять несколько аккаунтов.
+        #
+        # Поэтому отсутствие источника — это «не требуется», а не отказ. Иначе
+        # кнопка упирается в тупик на продукте, который уже работает.
         source = marketplace_path if marketplace_path.startswith("/") else ""
-        if not source or not os.path.isdir(source):
+        if not source:
+            return result("success", "plugin_not_required",
+                          "Плагин Claude Code не требуется: оба направления работают "
+                          "без него. Он появится как упаковка после публикации.",
+                          plugin_installed=False, plugin_required=False)
+        if not os.path.isdir(source):
             return result("error", "plugin_source_unavailable",
-                          "Не указан проверенный источник плагина Claude.")
+                          "Указанный источник плагина Claude не найден.")
         listing = run([claude, "plugin", "marketplace", "list", "--json"], timeout=45)
         if listing and listing.returncode == 0:
             # Measured 2026-08-14: this command also returns a bare JSON array.
@@ -349,9 +364,11 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         # authentication; the binding above is what proves the account.
         if not listed or ("extella_" + handle) not in (listed.stdout or ""):
             return result("error", "mcp_connection_missing", "Соединение Extella MCP не найдено в Claude Code.")
-        if not installed_plugin(run([claude, "plugin", "list", "--json"], timeout=60)):
-            return result("error", "plugin_verification_failed", "Claude Code не подтвердил установленный плагин Extella.")
+        # Наличие плагина сообщается, но готовностью не считается: измерено, что
+        # со снесённым плагином оба направления продолжают работать.
+        plugin_entry = installed_plugin(run([claude, "plugin", "list", "--json"], timeout=60))
         return result("success", "ready", "Claude Code подключён к Extella.",
+                      plugin_installed=bool(plugin_entry), plugin_required=False,
                       authorization_scope="account", live_enabled=True,
                       bridge_port=int(port), mcp_server="extella_" + handle,
                       account_binding_proved_by="token_validate",
@@ -382,7 +399,6 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         port = (port_probe.stdout or "").strip() if port_probe else ""
         done = {
             "preflight": True,
-            "install": bool(plugin_entry),
             "credentials": bool(handle) and os.path.isfile(os.path.join(MCP_DIR, handle + ".sh"))
             and bool(listed) and ("extella_" + handle) in (listed.stdout or ""),
             "bridge": port.isdigit(),
@@ -391,7 +407,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         # re-reading of the four above plus a live health check. Reporting it
         # as a completed step meant reporting False even right after it had
         # just returned ready, which is a status that contradicts the fact.
-        remaining = [step for step in ("install", "credentials", "bridge") if not done[step]]
+        remaining = [step for step in ("credentials", "bridge") if not done[step]]
         healthy = False
         if not remaining:
             try:
@@ -404,6 +420,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                 healthy = False
         return result("success", "status_read", "Состояние установки прочитано.",
                       completed=done, bridge_healthy=healthy,
+                      plugin_installed=bool(plugin_entry), plugin_required=False,
                       resume_from=(remaining[0] if remaining else None),
                       ready_to_verify=(not remaining and healthy),
                       plugin_version=str((plugin_entry or {}).get("version", ""))[:64])

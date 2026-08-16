@@ -537,7 +537,11 @@ test("status reports installable steps only, never verify as a done step", async
   // Reporting "verify": False right after verify returned ready is a status
   // that contradicts the fact. Verify is a re-reading, not a stored step.
   assert.equal(statusBody.includes('"verify": False'), false);
-  assert.ok(statusBody.includes('("install", "credentials", "bridge")'));
+  // install выпал из списка: измерено, что плагин не нужен ни одному
+  // направлению, поэтому он справка, а не этап установки.
+  assert.ok(statusBody.includes('("credentials", "bridge")'));
+  assert.equal(statusBody.includes('"install": bool(plugin_entry)'), false);
+  assert.ok(statusBody.includes("plugin_required=False"));
   assert.ok(statusBody.includes("ready_to_verify"));
   assert.ok(statusBody.includes("bridge_healthy"));
 });
@@ -564,4 +568,31 @@ test("the removal result names things exactly as the plan does", async () => {
     assert.ok(executed.includes(key), `${key} must appear in the executed result`);
   }
   assert.equal(/\n\s+removed,\n/.test(executed), false);
+});
+
+// ── The Claude Code plugin is packaging, not runtime ───────────────────────
+
+test("a missing plugin source is not required, and not a failure", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  // Measured 2026-08-15: with the plugin uninstalled and its marketplace
+  // removed, the MCP connection stayed alive and the bridge stayed healthy.
+  // Direction A rests on the MCP entry written by credentials, direction B on
+  // the LaunchAgent installed by bridge. Neither uses the plugin.
+  assert.ok(source.includes('"plugin_not_required"'));
+  assert.ok(source.includes("plugin_required=False"));
+  // An absent source is a fact to report, not a dead end for the button.
+  assert.equal(source.includes('if not source or not os.path.isdir(source)'), false);
+});
+
+test("readiness never depends on the plugin being installed", async () => {
+  const source = await readFile(EXPERT_PATH, "utf8");
+  const verifyBody = source.slice(
+    source.indexOf('if action == "verify"'),
+    source.indexOf('if action == "status"'),
+  );
+  assert.equal(verifyBody.includes("plugin_verification_failed"), false);
+  assert.ok(verifyBody.includes("plugin_installed=bool(plugin_entry)"));
+  // The two proofs that do gate readiness stay in place.
+  assert.ok(verifyBody.includes('account_binding_proved_by="token_validate"'));
+  assert.ok(verifyBody.includes('mcp_authentication_proved_by="mcp_tools_call"'));
 });
