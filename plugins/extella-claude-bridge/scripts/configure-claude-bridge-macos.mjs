@@ -329,11 +329,25 @@ async function waitForHealth(port) {
 // deliberately not in files_removed: it is the owner's credential material and
 // deleting it is a separate decision, not a side effect of uninstalling a
 // service. Nothing here names the Codex label, directory, or variables.
-function removalPlan({ plistPath, runtimeDir, stateDir, supportDir }) {
+// The plan must describe what this invocation actually does. Disable stops the
+// service and leaves every file and variable in place, so that a stopped
+// bridge can be started again without reinstalling; uninstall is the one that
+// removes things. An earlier version printed the uninstall plan for both,
+// which is the kind of report that reads as reassuring and is simply untrue.
+function removalPlan({ plistPath, runtimeDir, stateDir, supportDir, uninstall }) {
+  const removed = uninstall ? [plistPath, runtimeDir, stateDir, supportDir] : [];
+  const retained = uninstall
+    ? []
+    : [plistPath, supportDir, `${SECRET_VARIABLE}, ${PORT_VARIABLE}, ${BINDING_VARIABLE}`];
   return {
     service: LABEL,
-    files_removed: [plistPath, runtimeDir, stateDir, supportDir],
-    launchctl_variables_unset: [SECRET_VARIABLE, PORT_VARIABLE, BINDING_VARIABLE],
+    mode: uninstall ? "uninstall" : "disable",
+    stops_service: true,
+    files_removed: removed,
+    launchctl_variables_unset: uninstall
+      ? [SECRET_VARIABLE, PORT_VARIABLE, BINDING_VARIABLE]
+      : [],
+    kept_for_restart: retained,
     files_retained: [
       `${homedir()}/.extella/mcp (token and headers helper: removed only on a separate explicit decision)`,
     ],
@@ -392,7 +406,10 @@ async function main() {
   );
 
   if (options.disable || options.uninstall) {
-    const plan = removalPlan({ plistPath, runtimeDir, stateDir, supportDir });
+    const plan = removalPlan({
+      plistPath, runtimeDir, stateDir, supportDir,
+      uninstall: options.uninstall === true,
+    });
     if (options.dryRun) {
       console.log(JSON.stringify({ status: "removal_planned", ...plan }, null, 2));
       return;
@@ -421,6 +438,7 @@ async function main() {
       JSON.stringify(
         {
           status: options.uninstall ? "uninstalled" : "disabled",
+          mode: plan.mode,
           service: LABEL,
           removed,
           retained: plan.files_retained,

@@ -420,3 +420,66 @@ test("a partial install can be read and resumed instead of blindly repeated", as
     );
   }
 });
+
+// ── Rollback contract ──────────────────────────────────────────────────────
+
+const REMOVAL_PATHS = {
+  plistPath: "/tmp/x/ai.extella.claude-bridge.plist",
+  runtimeDir: "/tmp/x/runtime",
+  stateDir: "/tmp/x/state",
+  supportDir: "/tmp/x",
+};
+
+test("disable stops the service and removes nothing", () => {
+  const plan = removalPlan({ ...REMOVAL_PATHS, uninstall: false });
+  assert.equal(plan.mode, "disable");
+  assert.equal(plan.stops_service, true);
+  // An earlier version printed the uninstall plan for both, which reads as
+  // reassuring and is simply untrue.
+  assert.deepEqual(plan.files_removed, []);
+  assert.deepEqual(plan.launchctl_variables_unset, []);
+  assert.ok(plan.kept_for_restart.length > 0);
+});
+
+test("uninstall removes only Claude files and only Claude variables", () => {
+  const plan = removalPlan({ ...REMOVAL_PATHS, uninstall: true });
+  assert.equal(plan.mode, "uninstall");
+  assert.deepEqual(plan.files_removed, [
+    REMOVAL_PATHS.plistPath,
+    REMOVAL_PATHS.runtimeDir,
+    REMOVAL_PATHS.stateDir,
+    REMOVAL_PATHS.supportDir,
+  ]);
+  for (const name of plan.launchctl_variables_unset) {
+    assert.ok(name.startsWith("EXTELLA_CLAUDE_"), `${name} is not a Claude variable`);
+  }
+  assert.equal(plan.launchctl_variables_unset.includes("EXTELLA_BRIDGE_SECRET"), false);
+  assert.equal(plan.launchctl_variables_unset.includes("EXTELLA_API_TOKEN"), false);
+  assert.equal(plan.idempotent, true);
+  assert.equal(plan.model_called, false);
+});
+
+test("neither mode touches the Codex service or the account token", () => {
+  for (const uninstall of [false, true]) {
+    const plan = removalPlan({ ...REMOVAL_PATHS, uninstall });
+    const serialized = JSON.stringify(plan.files_removed);
+    assert.equal(serialized.includes("Extella Agent Builder"), false);
+    assert.equal(serialized.includes("codex"), false);
+    const untouched = plan.untouched.join(" ");
+    assert.ok(untouched.includes("codex-bridge"));
+    assert.ok(untouched.includes("EXTELLA_API_TOKEN"));
+  }
+});
+
+test("the token file is never removed without a separate decision", () => {
+  const plan = removalPlan({ ...REMOVAL_PATHS, uninstall: true });
+  const retained = plan.files_retained.join(" ");
+  assert.ok(retained.includes(".extella/mcp"));
+  assert.ok(retained.includes("separate explicit decision"));
+  // Match the token directory, not the service label: "ai.extella.claude-bridge"
+  // legitimately contains ".extella".
+  assert.equal(JSON.stringify(plan.files_removed).includes(".extella/mcp"), false);
+  for (const path of plan.files_removed) {
+    assert.equal(path.includes("/.extella/"), false, `${path} must not be removed`);
+  }
+});
