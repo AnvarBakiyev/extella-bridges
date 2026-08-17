@@ -45,7 +45,10 @@ function pinnedSource(tag) {
         "a branch name is a floating source",
     );
   }
-  return { source: "github", owner: OWNER, repo: REPO, ref: tag };
+  // `repo` carries owner and name together. A separate `owner` field validates
+  // and even installs from a warm cache, then fails a clean-room install with
+  // "Invalid GitHub repository format" — the shape has to be owner/repo.
+  return { source: "github", repo: `${OWNER}/${REPO}`, ref: tag };
 }
 
 // A string entry is the local path; an object entry must carry a tag. Anything
@@ -56,7 +59,13 @@ function describeSource(entry) {
       ? { kind: "local", pinned: false, detail: entry }
       : { kind: "invalid", pinned: false, detail: entry };
   }
-  if (entry && entry.source === "github" && RELEASE_TAG.test(entry.ref || "")) {
+  if (
+    entry &&
+    entry.source === "github" &&
+    /^[\w.-]+\/[\w.-]+$/.test(entry.repo || "") &&
+    !entry.owner &&
+    RELEASE_TAG.test(entry.ref || "")
+  ) {
     return { kind: "github", pinned: true, detail: entry.ref };
   }
   return { kind: "invalid", pinned: false, detail: JSON.stringify(entry) };
