@@ -24,7 +24,13 @@ const RUNTIME_SCRIPT_FILES = [
   "bridge-core.mjs",
   "bridge-server.mjs",
   "execution-profiles.mjs",
+  "extella-guide-source.mjs",
   "invoke-provider.mjs",
+  // Claude adapter modules. They are part of the module graph, so the bundle
+  // must carry them, but no installer path enables the Claude provider yet:
+  // validateOptions still accepts only mock and codex.
+  "adapter-claude.mjs",
+  "claude-cli-contract.mjs",
 ];
 const SCRUB_BEFORE_NODE = [
   "EXTELLA_API_TOKEN",

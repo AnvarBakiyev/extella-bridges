@@ -37,6 +37,18 @@ function integerEnv(name, fallback, minimum, maximum) {
   return value;
 }
 
+const SECRET_VARIABLE = /^EXTELLA_[A-Z0-9_]{0,48}BRIDGE_SECRET$/;
+
+function secretVariableName(value) {
+  const name = value || "EXTELLA_BRIDGE_SECRET";
+  if (!SECRET_VARIABLE.test(name)) {
+    throw new Error(
+      "EXTELLA_BRIDGE_SECRET_NAME must name an EXTELLA_*BRIDGE_SECRET variable",
+    );
+  }
+  return name;
+}
+
 function csvEnv(name, fallback = "") {
   return new Set(
     (process.env[name] || fallback)
@@ -63,16 +75,23 @@ async function main() {
     options.port ||
     integerEnv("EXTELLA_BRIDGE_PORT", 8787, 1024, 65535);
   const providers = csvEnv("EXTELLA_BRIDGE_ALLOWED_PROVIDERS", "mock");
+  const paidProvider = ["codex", "claude"].find((name) => providers.has(name));
   const live =
-    providers.has("codex") &&
+    Boolean(paidProvider) &&
     process.env.EXTELLA_AGENT_BUILDER_LIVE === "I_UNDERSTAND_COST";
-  if (providers.has("codex") && !live) {
+  if (paidProvider && !live) {
     throw new Error(
-      "Codex provider requires EXTELLA_AGENT_BUILDER_LIVE=I_UNDERSTAND_COST",
+      `${paidProvider} provider requires ` +
+        "EXTELLA_AGENT_BUILDER_LIVE=I_UNDERSTAND_COST",
     );
   }
+  // Each provider service carries its own secret. The name is configurable so
+  // a second service can read a different launchctl variable, which keeps the
+  // secret itself out of the LaunchAgent file exactly as the Codex service
+  // already does.
+  const secretName = secretVariableName(process.env.EXTELLA_BRIDGE_SECRET_NAME);
   const server = createBridgeServer({
-    secret: process.env.EXTELLA_BRIDGE_SECRET,
+    secret: process.env[secretName],
     allowedAgentIds: csvEnv("EXTELLA_BRIDGE_AGENT_IDS"),
     allowedAccountBindings: csvEnv(
       "EXTELLA_BRIDGE_ACCOUNT_BINDINGS",
@@ -145,4 +164,4 @@ if (isMainModule(import.meta.url)) {
   });
 }
 
-export { csvEnv, isMainModule, main, parseArgs };
+export { csvEnv, isMainModule, main, parseArgs, secretVariableName };

@@ -22,7 +22,7 @@ const LOOPBACK_ADDRESSES = new Set([
   "::1",
   "::ffff:127.0.0.1",
 ]);
-const PROVIDERS = new Set(["mock", "codex"]);
+const PROVIDERS = new Set(["mock", "codex", "claude"]);
 const REQUEST_KEYS_V1 = new Set([
   "schema_version",
   "event_id",
@@ -75,6 +75,53 @@ const PROVIDER_ERROR_MESSAGES = new Map([
   [
     "codex_configuration_incompatible",
     "The local Codex configuration is incompatible with the bridge",
+  ],
+  ["claude_auth_required", "Claude Code is not signed in on this computer"],
+  [
+    "claude_auth_revoked",
+    "The Claude Code sign-in on this computer was revoked; run claude auth login",
+  ],
+  [
+    "claude_conversation_not_found",
+    "This Extella chat no longer has a saved local Claude conversation",
+  ],
+  [
+    "claude_conversation_profile_mismatch",
+    "This Claude conversation uses a different execution profile",
+  ],
+  [
+    "claude_timed_out",
+    "Claude did not finish before timeout_ms; a revoked sign-in also looks " +
+      "like this, because the CLI retries an authentication failure for about " +
+      "three minutes",
+  ],
+  [
+    "claude_managed_settings_conflict",
+    "Managed Claude Code settings on this computer could not be isolated",
+  ],
+  [
+    "claude_managed_settings_unreadable",
+    "Managed Claude Code settings exist but could not be read",
+  ],
+  [
+    "extella_guide_source_unavailable",
+    "The public Extella guide could not be read; Codex was not started",
+  ],
+  [
+    "extella_guide_source_invalid",
+    "The public Extella guide is invalid; Codex was not started",
+  ],
+  [
+    "extella_guide_source_rollback_detected",
+    "The public Extella guide is older than the accepted version; Codex was not started",
+  ],
+  [
+    "extella_guide_source_state_invalid",
+    "The local Extella guide version state is invalid; Codex was not started",
+  ],
+  [
+    "extella_guide_source_state_write_failed",
+    "The Extella guide version could not be recorded; Codex was not started",
   ],
 ]);
 

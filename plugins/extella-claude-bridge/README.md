@@ -1,0 +1,163 @@
+# Extella ↔ Claude Code bridge (PoC)
+
+Proof of concept. Nothing here is installed, published, or wired to a live
+Extella account. The Codex bridge 0.3.5 is untouched.
+
+## Layout
+
+```
+.claude-plugin/marketplace.json          ← repository root, one per repository
+plugins/extella-claude-bridge/
+  .claude-plugin/plugin.json             ← plugin root, one per plugin
+  experts/extella_claude_account_bridge_v1.fython
+  scripts/extella-mcp-accounts.mjs
+```
+
+The marketplace manifest is not duplicated inside the plugin: a second copy
+would become a competing local canon.
+
+## Version pinning
+
+For local validation the marketplace entry uses a relative `source`. At publish
+time it becomes a pinned git source, because `claude plugin marketplace add`
+has no `--ref` flag — unlike the Codex CLI, pinning lives in the manifest.
+`scripts/set-marketplace-source.mjs` performs the switch and refuses a branch:
+
+```bash
+node scripts/set-marketplace-source.mjs --check      # what is declared now
+node scripts/set-marketplace-source.mjs --tag v0.2.0 # publish form
+node scripts/set-marketplace-source.mjs --local      # back to the local path
+```
+
+
+```json
+{
+  "source": "github",
+  "owner": "AnvarBakiyev",
+  "repo": "extella-codex-bridge",
+  "ref": "v0.4.0"
+}
+```
+
+`ref` accepts a tag, a branch, or a commit SHA. Only a tag is acceptable here:
+a branch is a floating source.
+
+## Direction A — one Extella account, one MCP connection
+
+Proven live on 2026-08-14: a real `list_agents` call returned account data
+through this configuration.
+
+`plugin.json` deliberately declares neither `userConfig` nor `mcpServers`.
+A plugin carries exactly one set of `userConfig` values, so a second Extella
+account would overwrite the first, which breaks the rule that each account is
+its own connection.
+
+Each account gets a derived, non-reversible handle and its own entry:
+
+| Derived from the account token | Example |
+| --- | --- |
+| handle | `acct_9f2c1ab47e05` |
+| MCP server name | `extella_acct_9f2c1ab47e05` |
+| token file, mode 0600 | `~/.extella/mcp/acct_9f2c1ab47e05.token` |
+| headers helper, mode 0700 | `~/.extella/mcp/acct_9f2c1ab47e05.sh` |
+
+```json
+{
+  "mcpServers": {
+    "extella_acct_9f2c1ab47e05": {
+      "type": "http",
+      "url": "https://api.extella.ai/mcp/",
+      "headersHelper": "/Users/you/.extella/mcp/acct_9f2c1ab47e05.sh"
+    }
+  }
+}
+```
+
+### Why headersHelper and not `${VAR}`
+
+Both keep the token out of the config file and out of git. `${VAR}` was
+measured and rejected for two further reasons:
+
+* it puts the token in the process environment;
+* **`claude mcp get` prints the resolved header value in plain text.** With a
+  helper that command has nothing to print — the measured output shows no
+  `Headers` block at all.
+
+The helper reads the token from its 0600 file at request time and never
+receives it as an argument, so it appears in no process listing.
+
+### Three headers, and an agent id that belongs to the token
+
+A connection carrying only `X-Auth-Token` fails every tool call with a
+dependency resolution error for `token`. Extella needs the same trio that
+`deploy-extella-assets.mjs` already sends on every REST call:
+
+```
+X-Auth-Token   from the 0600 file
+X-Profile-Id   default
+X-Agent-Id     resolved per token, NOT the literal agent_extella_default
+```
+
+`POST /api/token/validate` returns `agent_id` for the token; it is resolved
+once at setup and written into the helper.
+
+### Verification must not trust "Connected"
+
+`claude mcp list` and `claude mcp get` report `✓ Connected` for a server with
+no token at all, and for a deliberately wrong one. Measured: an MCP
+`initialize` returns an identical HTTP 200 in all three cases, so the health
+check proves reachability and nothing else.
+
+Account binding is verified against `POST /api/token/validate`, which the Codex
+installer already uses, calls no model, and yields the agent id the headers
+need.
+
+## Direction B — the Expert
+
+`extella_claude_account_bridge_v1.fython` mirrors the Codex Expert: loopback
+only, HMAC over `timestamp.nonce.body`, account binding derived from the token,
+strict JSON on every return path (H17), `run_agent` never used.
+
+It reads `EXTELLA_CLAUDE_BRIDGE_SECRET` and `EXTELLA_CLAUDE_BRIDGE_PORT` — its
+own secret and its own port, not the Codex ones, so an isolation mistake on one
+route cannot silently affect the other. The port has no default: an
+unconfigured bridge fails visibly instead of talking to whatever is listening.
+
+## The storefront button
+
+`integrations/extella-desktop/` carries the host-side pieces, mirroring the
+Codex button:
+
+* `claude-installer.js` — pinned installer. The iframe supplies no Expert name,
+  command, repository, ref, credential, port, or target device; every mutable
+  value lives in the signed toolbar release.
+* `claude-account-bridge.js` — the account-global Expert the agents call.
+
+Both embed their Expert verbatim with a pinned SHA-256, generated by
+`scripts/sync-claude-assets.mjs`. Edit the Expert, run the sync; the suite
+fails if the shipped copy or its digest drifts from the file on disk.
+
+### Registering the channel
+
+`marketplace.js` is a stable Extella Desktop file and is not modified here. To
+wire the button, add a channel beside `etb_codex_install` that forwards to
+`ETB.claudeInstaller.install()` and `ETB.claudeInstaller.connectionStatus()`,
+with the same fail-closed shape: verify `e.source` is the storefront frame,
+require a request id, and never read an Expert name or command from the message.
+
+### What the installer refuses
+
+* a step reporting `model_called`, `agent_called`, or `paid` fails the run even
+  when it says success — setup must not spend the user's plan;
+* a Python `repr` is refused rather than guessed at (H17), and both response
+  envelopes are unwrapped;
+* `connectionStatus()` requires `account_binding_proved_by = token_validate`
+  and `mcp_authentication_proved_by = mcp_tools_call`. A connected flag is not
+  accepted as evidence, because an MCP initialize answers alike with a valid
+  token, no token, and a wrong one.
+
+### Resume rather than repeat
+
+`install()` reads `status` before running anything and continues from the
+reported gap. Proven on a host left half-installed by an uninstall: status
+named the missing step, and only that step ran.

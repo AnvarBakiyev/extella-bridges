@@ -468,6 +468,85 @@ ETB.marketplace = (function () {
           return;
         }
 
+        // Отдельный fail-closed канал для Claude, зеркало Codex-канала.
+        // Iframe не выбирает ни Expert, ни команду, ни репозиторий, ни ref, ни
+        // креденшелы, ни устройство: всё закреплено в этом доверенном модуле.
+        if (e.data.type === 'etb_claude_install') {
+          var _lf = document.getElementById('_etbv2_mkt_frame');
+          var _lrid = String(e.data.reqId || '');
+          var _lback = function (msg) {
+            if (_lf && _lf.contentWindow) {
+              try { _lf.contentWindow.postMessage(msg, '*'); } catch (_) {}
+            }
+          };
+          if (!_lf || e.source !== _lf.contentWindow || !_lrid) return;
+          if (!ETB.claudeInstaller || typeof ETB.claudeInstaller.install !== 'function') {
+            _lback({
+              type: 'etb_claude_install_result',
+              reqId: _lrid,
+              ok: false,
+              code: 'installer_unavailable',
+              error: 'Установщик Claude недоступен в этой версии Extella.'
+            });
+            return;
+          }
+          ETB.claudeInstaller.install({
+            onProgress: function (state) {
+              _lback({
+                type: 'etb_claude_install_progress',
+                reqId: _lrid,
+                stage: state.stage,
+                metadata: state.metadata || ETB.claudeInstaller.metadata()
+              });
+            }
+          }).then(function (result) {
+            _lback({ type: 'etb_claude_install_result', reqId: _lrid, ok: true, result: result });
+          }).catch(function (error) {
+            _lback({
+              type: 'etb_claude_install_result',
+              reqId: _lrid,
+              ok: false,
+              code: (error && error.code) || 'installer_failed',
+              error: (error && error.message) || 'Не удалось подключить Claude.',
+              stage: (error && error.installStage) || ''
+            });
+          });
+          return;
+        }
+
+        if (e.data.type === 'etb_claude_status') {
+          var _lsf = document.getElementById('_etbv2_mkt_frame');
+          var _lsrid = String(e.data.reqId || '');
+          if (!_lsf || e.source !== _lsf.contentWindow || !_lsrid) return;
+          var _lsback = function (msg) {
+            if (_lsf && _lsf.contentWindow) {
+              try { _lsf.contentWindow.postMessage(msg, '*'); } catch (_) {}
+            }
+          };
+          if (!ETB.claudeInstaller ||
+              typeof ETB.claudeInstaller.connectionStatus !== 'function') {
+            _lsback({
+              type: 'etb_claude_status_result',
+              reqId: _lsrid,
+              ok: false,
+              error: 'Статус подключения Claude недоступен.'
+            });
+            return;
+          }
+          ETB.claudeInstaller.connectionStatus().then(function (status) {
+            _lsback({ type: 'etb_claude_status_result', reqId: _lsrid, ok: true, status: status });
+          }).catch(function (error) {
+            _lsback({
+              type: 'etb_claude_status_result',
+              reqId: _lsrid,
+              ok: false,
+              error: (error && error.message) ||
+                'Не удалось проверить статус подключения Claude.'
+            });
+          });
+          return;
+        }
+
         if (e.data.type === 'etb_codex_status') {
           var _csf = document.getElementById('_etbv2_mkt_frame');
           var _csrid = String(e.data.reqId || '');
