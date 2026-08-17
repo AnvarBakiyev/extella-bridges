@@ -161,11 +161,11 @@ test("the routing rule is Claude-specific and forbids run_agent", async () => {
     "global=true must be in the same sentence as the call form");
   // Both refusals the platform actually produces must be named with their
   // remedy: the wrong scope, and the wrong machine.
-  const refusals = rule.slice(rule.indexOf("ОТКАЗЫ"));
-  assert.ok(refusals.includes("Expert not found"));
-  assert.ok(refusals.includes("повтори тот же вызов с global=true"));
-  assert.ok(refusals.includes("bridge_not_configured"));
-  assert.ok(refusals.includes("разреши цель"));
+  // Both refusals the platform produces are named with what they mean.
+  assert.ok(rule.includes("Expert not found"));
+  assert.ok(rule.includes("Повторять бесполезно"));
+  assert.ok(rule.includes("bridge_not_configured"));
+  assert.ok(rule.includes("search_targets"));
   // A cloud agent on a Claude model is not the local bridge.
   assert.ok(rule.includes("другого агента на модели Claude"));
 

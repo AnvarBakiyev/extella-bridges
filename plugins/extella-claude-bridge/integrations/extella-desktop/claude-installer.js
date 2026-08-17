@@ -24,38 +24,39 @@ ETB.claudeInstaller = (function () {
   var LONG_STEPS = { install: true, bridge: true };
 
   var ROUTING_RULE_MARKER = 'EXTELLA_CLAUDE_ROUTING_V1';
-  // Правило Codex V4 предписывает запасной путь «нет прямого инструмента —
-  // run_expert без targets». Замер показал, что этот вызов уходит в облачный
-  // контейнер без launchctl, и мост оттуда честно отвечает bridge_not_configured
-  // (см. DEFECTS.md, D3). Поэтому здесь он не копируется: запасной путь обязан
-  // сначала разрешить цель и никогда не вызывать run_expert без неё.
+  // Две поправки, купленные замерами, а не рассуждением.
   //
-  // Идентификатора устройства в правиле нет и быть не должно: устройства
-  // перерегистрируются, и зашитый UUID пережил бы своё устройство молча.
+  // Первая: «вызывай инструмент напрямую, если он доступен» удалено. Запись в
+  // agent.tools сохраняет строку в конфигурации, но не превращает Expert в
+  // function schema модели: у проверенных чат-агентов моста нет в списке
+  // функций ни под каким именем — ни Claude, ни Codex. Обещать путь, которого
+  // нет, хуже, чем не обещать ничего.
+  //
+  // Вторая: запрет на run_expert без targets снят для чата. Мой замер «без
+  // targets уходит в облако» сделан из ВНЕШНЕГО MCP, где цель по умолчанию —
+  // облачный VPS. В чате цель по умолчанию — машина пользователя, и там это
+  // единственный работающий вызов; он же и подтверждён живым ответом Claude.
+  // Обобщать один контекст на все было ошибкой.
   var ROUTING_RULE_TEXT = ROUTING_RULE_MARKER +
-    ': ВЫЗОВ CLAUDE. Основной путь: вызывай инструмент ' +
-    'extella_claude_account_bridge_v1 напрямую — он подключён к агенту, и такой ' +
-    'вызов исполняется в контексте цели этого чата. Это единственный путь, ' +
-    'который не требует выбирать устройство вручную. ' +
-    'ЗАПАСНОЙ ПУТЬ, только если прямого инструмента у тебя нет. Он состоит из ' +
-    'трёх шагов, и пропускать нельзя ни один. Шаг 1: найди цель — search_targets ' +
-    'по описанию рабочего листенера на машине пользователя, возьми записи с ' +
-    'available=true и получи их device_id. Шаг 2: проверь каждую цель — вызови ' +
-    'мост с пустым prompt на этой цели; ответ bridge_not_configured значит, что ' +
-    'моста там нет, любой другой ответ моста значит, что он есть. Шаг 3: вызови run_expert с ' +
-    'name="extella_claude_account_bridge_v1", global=true и targets=[device_id] ' +
-    'найденной цели. НИКОГДА не вызывай run_expert без targets: такой вызов ' +
-    'уходит на цель по умолчанию, у которой нет локального моста, и вернёт ' +
-    'bridge_not_configured. Если целей несколько, пробуй по очереди и бери ту, ' +
-    'которая ответила успешно. Никогда не запоминай device_id между вызовами и ' +
-    'не подставляй его из прошлых сообщений: устройство перерегистрируется, ' +
-    'разрешай цель заново каждый раз. ' +
-    'ОТКАЗЫ. "Expert not found" означает, что искали не в том скоупе: повтори ' +
-    'тот же вызов с global=true. bridge_not_configured означает, что вызов ушёл ' +
-    'не на ту машину: вернись к шагу 1 и разреши цель. Никогда не подставляй ' +
-    'вместо моста другого агента на модели Claude: локальный мост и облачный ' +
-    'Claude-агент — разные вещи, и пользователь просит именно мост. Не вызывай ' +
-    'get_expert или search_experts заранее. ' +
+    ': ВЫЗОВ CLAUDE. Вызывай run_expert с ' +
+    'name="extella_claude_account_bridge_v1" и ОБЯЗАТЕЛЬНО global=true. ' +
+    'Из обычного чата этого достаточно: targets НЕ указывай — вызов исполнится ' +
+    'в контексте цели самого чата, то есть на машине пользователя. ' +
+    'ЕСЛИ ОТВЕТ bridge_not_configured — значит вызов ушёл не на ту машину. ' +
+    'Так бывает у внешних подключений, где цель по умолчанию чужая. Тогда, и ' +
+    'только тогда: search_targets по описанию рабочего листенера, взять записи ' +
+    'с available=true, проверить каждую вызовом моста с пустым prompt (ответ ' +
+    'bridge_not_configured значит, что моста там нет, любой другой ответ моста ' +
+    'значит, что он есть) и повторить вызов с targets=[device_id] найденной ' +
+    'цели. Если search_targets вернул пусто — это не «целей нет», а «ты в чате»: ' +
+    'вызывай без targets. Никогда не запоминай device_id между вызовами: ' +
+    'устройства перерегистрируются, разрешай цель заново. ' +
+    'ЕСЛИ ОТВЕТ Expert not found — Expert существует, но не разрешается в твоём ' +
+    'скоупе. Повторять бесполезно, targets и pin не помогают. Сообщи об этом ' +
+    'словами и остановись. ' +
+    'Никогда не подставляй вместо моста другого агента на модели Claude: ' +
+    'локальный мост и облачный Claude-агент — разные вещи, и пользователь ' +
+    'просит именно мост. Не вызывай get_expert или search_experts заранее. ' +
     'ПАРАМЕТРЫ: prompt, conversation_id текущего чата, execution_profile_id. ' +
     'Используй execution_profile_id="answer-only", если пользователь явно не ' +
     'выбрал другой профиль, о котором мост сообщил как о доступном. Сохранённый ' +
@@ -720,64 +721,18 @@ ETB.claudeInstaller = (function () {
       });
   }
 
-  // Публичные системные агенты — общие платформенные объекты: Extella
-  // правомерно игнорирует аккаунтные правки их инструментов. Они и не нужны:
-  // у них есть системный Extella MCP, через который виден account-global
-  // Expert. Менять их — значит писать в чужое живое.
-  function _canRunGlobalExpert(tools) {
-    return tools.indexOf('run_expert') !== -1 ||
-      tools.indexOf('run_expert_mcp_extella') !== -1 ||
-      tools.indexOf('sys__all__sys_mcp_extella') !== -1 ||
-      tools.indexOf('sys__server__sys_mcp_extella') !== -1;
-  }
-
-  function _agentDetail(response) {
-    var value = response && response.content ? response.content : response;
-    return (value && value.agent) || value || {};
-  }
-
-  // Прямой инструмент — основной путь именно потому, что такой вызов
-  // исполняется в контексте цели чата. run_expert без targets уходит на цель
-  // по умолчанию, у которой локального моста нет (DEFECTS.md, D3).
-  function _attachBridgeTool(agentId) {
-    var bridge = ETB.claudeAccountBridge;
-    return ETB.api.agentGetScoped(agentId).then(function (before) {
-      var detail = _agentDetail(before);
-      if (!Array.isArray(detail.tools)) {
-        throw new Error('Extella не вернула список tools агента ' + agentId + '.');
-      }
-      var tools = detail.tools.map(String);
-      var isPublic = detail.isPublic === true || detail.is_public === true;
-      if (tools.indexOf(bridge.name) !== -1) {
-        return { agentId: agentId, added: false, viaSystemMcp: false };
-      }
-      if (isPublic) {
-        // Не пытаемся править публичного агента: правка не закрепится, а
-        // «применили» без перечитки — это ложная зелень.
-        if (_canRunGlobalExpert(tools)) {
-          return { agentId: agentId, added: false, viaSystemMcp: true };
-        }
-        throw new Error('Публичный агент ' + agentId + ' не видит Extella MCP.');
-      }
-      return ETB.api.agentToolsUpdateScoped(agentId, tools.concat([bridge.name]))
-        .then(function (updated) {
-          if (updated && updated.status === 'error') {
-            throw new Error(updated.message || 'Не удалось подключить Claude к агенту.');
-          }
-          return ETB.api.agentGetScoped(agentId);
-        })
-        .then(function (after) {
-          // Читаем обратно: платформа пишет одним набором полей, а отдаёт
-          // другим, и проверка по флагу ответа всегда зелёная.
-          var saved = _agentDetail(after);
-          var savedTools = Array.isArray(saved.tools) ? saved.tools.map(String) : [];
-          if (savedTools.indexOf(bridge.name) === -1) {
-            throw new Error('Extella не сохранила tool Claude у агента ' + agentId + '.');
-          }
-          return { agentId: agentId, added: true, viaSystemMcp: false };
-        });
-    });
-  }
+  // Подключение Expert в agent.tools удалено намеренно.
+  //
+  // Замер: строка в agent.tools сохраняется и читается обратно, но моделью не
+  // видна — у проверенных чат-агентов нет ни Claude-моста, ни Codex-моста в
+  // списке функций, хотя оба лежат в tools. Значит проверка установщика
+  // «строка появилась в agent.tools» доказывала сохранение конфигурации и
+  // выдавала это за доступность функции. Это ложная зелень, и лучше не делать
+  // шаг вовсе, чем делать его и отчитываться об успехе.
+  //
+  // Рабочий путь — run_expert через системный Extella MCP, он же описан в
+  // правиле. Шаг вернётся, если у платформы появится настоящий Expert-tool
+  // adapter, публикующий function schema.
 
   function _runStep(targetScope, step, marketplacePath) {
     var long = LONG_STEPS[step] === true;

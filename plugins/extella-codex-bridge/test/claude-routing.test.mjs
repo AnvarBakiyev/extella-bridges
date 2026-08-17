@@ -69,7 +69,7 @@ test("no device identifier is written into the rule, the Expert, or the page", a
   }
 });
 
-test("the rule forbids the fallback that Codex V4 prescribes", async () => {
+test("the rule separates the chat path from the external one", async () => {
   const source = await readFile(INSTALLER, "utf8");
   const declarations = source.slice(
     source.indexOf("var ROUTING_RULE_MARKER"),
@@ -77,22 +77,26 @@ test("the rule forbids the fallback that Codex V4 prescribes", async () => {
   );
   const rule = Function(`${declarations}\nreturn ROUTING_RULE_TEXT;`)();
 
-  // Measured: run_expert without targets lands in a cloud container with no
-  // launchctl, and the bridge answers bridge_not_configured from there.
-  assert.ok(rule.includes("НИКОГДА не вызывай run_expert без targets"));
-  assert.ok(rule.includes("search_targets"));
-  assert.ok(rule.includes("targets=[device_id]"));
-  // The probe is part of the fallback: a reachable device is not a device
-  // carrying the bridge.
-  assert.ok(rule.includes("пустым prompt"));
-  assert.ok(rule.includes("трёх шагов"));
-  assert.ok(rule.includes("разрешай цель заново"));
-  assert.ok(rule.includes("bridge_not_configured"));
-  // The direct tool is the primary path, and the reason is stated.
-  assert.ok(rule.indexOf("напрямую") < rule.indexOf("ЗАПАСНОЙ ПУТЬ"));
+  // Measured from a chat: run_expert(global=true) without targets reaches the
+  // user's machine and Claude answered. The earlier blanket ban on targetless
+  // calls came from measuring only the external MCP, whose default target is a
+  // cloud container, and it forbade the one path that works.
+  assert.ok(rule.includes("targets НЕ указывай"));
+  assert.equal(rule.includes("НИКОГДА не вызывай run_expert без targets"), false);
+
+  // Resolution stays, but only where it belongs: after bridge_not_configured.
+  const fallback = rule.slice(rule.indexOf("bridge_not_configured"));
+  assert.ok(fallback.includes("search_targets"));
+  assert.ok(fallback.includes("targets=[device_id]"));
+  assert.ok(fallback.includes("пустым prompt"));
+  // An empty target search means "you are in a chat", not "no devices exist".
+  assert.ok(rule.includes("это не «целей нет»"));
+
+  // Expert not found is named as unrecoverable rather than retried.
+  assert.ok(rule.includes("Expert not found"));
+  assert.ok(rule.includes("Повторять бесполезно"));
   assert.equal(UUID.test(rule), false);
 });
-
 // ── Resolution ─────────────────────────────────────────────────────────────
 
 test("only available candidates are considered, and duplicates collapse", () => {
@@ -170,18 +174,25 @@ test("the probe reads the payload, and only one code means no bridge", () => {
 
 // ── The direct tool, and who must not be touched ───────────────────────────
 
-test("public agents keep the system MCP and are never rewritten", async () => {
+test("no step claims to publish the Expert as a model tool", async () => {
   const source = await readFile(INSTALLER, "utf8");
-  const body = source.slice(source.indexOf("function _attachBridgeTool"));
-  // Public agents are shared platform objects: an account-local tool edit does
-  // not stick, and reporting it as applied would be a false green.
-  assert.ok(body.includes("isPublic"));
-  assert.ok(body.includes("viaSystemMcp: true"));
-  assert.ok(body.includes("_canRunGlobalExpert"));
-  // A modifiable agent is verified by reading its tools back.
-  assert.ok(body.includes("agentToolsUpdateScoped"));
-  assert.ok(body.includes("не сохранила tool Claude"));
-  const update = body.indexOf("agentToolsUpdateScoped");
-  const readback = body.indexOf("agentGetScoped", update);
-  assert.ok(readback > update, "the tool list must be re-read after the write");
+  // Measured: a string written to agent.tools reads back, and the model still
+  // does not see it — neither the Claude bridge nor the Codex one, though both
+  // are in tools. The installer's readback proved the config save and was
+  // presented as availability, which is the same false green as D2.
+  assert.equal(source.includes("_attachBridgeTool"), false);
+  assert.equal(source.includes("agentToolsUpdateScoped"), false);
+  // Comment text wraps across lines, so match the prose with markers and line
+  // breaks collapsed. Four assertions in this suite have now failed on
+  // line-wrapped or commented text rather than on the thing they check.
+  const prose = source.replace(/^\s*\/\/ ?/gm, "").replace(/\s+/g, " ");
+  assert.ok(prose.includes("моделью не видна"), "the removal must state why");
+  // The working path is run_expert through the system MCP, and the rule says so.
+  const declarations = source.slice(
+    source.indexOf("var ROUTING_RULE_MARKER"),
+    source.indexOf("var _running"),
+  );
+  const rule = Function(`${declarations}\nreturn ROUTING_RULE_TEXT;`)();
+  assert.ok(rule.includes("run_expert"));
+  assert.equal(rule.includes("напрямую"), false, "no direct-tool promise remains");
 });
