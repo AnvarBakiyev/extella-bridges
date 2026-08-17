@@ -121,7 +121,8 @@ test("installation resumes from the reported gap instead of repeating steps", as
   assert.ok(source.includes("'status'"), "status is read before any step runs");
   assert.match(source, /pending = STEPS\.slice\(STEPS\.indexOf\(state\.resumeFrom\)\)/);
   const steps = embeddedSteps(source);
-  assert.deepEqual(steps, ["preflight", "install", "credentials", "bridge", "verify"]);
+  assert.deepEqual(steps,
+    ["preflight", "install", "credentials", "agents", "bridge", "verify"]);
 });
 
 function embeddedSteps(source) {

@@ -9,6 +9,196 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     APP_NAME = "Разработка на Extella"
     HOME = os.path.expanduser("~")
     MCP_DIR = os.path.join(HOME, ".extella", "mcp")
+    BRIDGE_EXPERT = "extella_claude_account_bridge_v1"
+    BRIDGE_CODE = (
+        '$extens("include.py")\n'
+        'include("import os", [])\n'
+        'include("import json", [])\n'
+        'include("import time", [])\n'
+        'include("import uuid", [])\n'
+        'include("import hmac", [])\n'
+        'include("import hashlib", [])\n'
+        'include("import subprocess", [])\n'
+        'include("import urllib.request", [])\n'
+        'include("import urllib.error", [])\n'
+        '\n'
+        'def extella_claude_account_bridge_v1(\n'
+        '    prompt: str = "",\n'
+        '    conversation_id: str = "",\n'
+        '    execution_profile_id: str = "answer-only",\n'
+        '    max_output_tokens: int = 2000,\n'
+        '    timeout_ms: int = 120000\n'
+        ') -> str:\n'
+        '    import os, json, time, uuid, hmac, hashlib, subprocess, urllib.request, urllib.error\n'
+        '\n'
+        '    def launch_environment(name):\n'
+        '        try:\n'
+        '            completed = subprocess.run(\n'
+        '                ["/bin/launchctl", "getenv", name],\n'
+        '                stdout=subprocess.PIPE,\n'
+        '                stderr=subprocess.DEVNULL,\n'
+        '                text=True,\n'
+        '                timeout=5,\n'
+        '                shell=False\n'
+        '            )\n'
+        '            if completed.returncode == 0 and completed.stdout.strip():\n'
+        '                return completed.stdout.strip()\n'
+        '        except Exception:\n'
+        '            pass\n'
+        '        return ""\n'
+        '\n'
+        '    def local_environment(name, default=""):\n'
+        '        value = os.environ.get(name, "")\n'
+        '        if value:\n'
+        '            return value\n'
+        '        value = launch_environment(name)\n'
+        '        if value:\n'
+        '            return value\n'
+        '        return default\n'
+        '\n'
+        '    def strict_json(payload):\n'
+        '        return json.dumps(\n'
+        '            payload,\n'
+        '            ensure_ascii=False,\n'
+        '            separators=(",", ":")\n'
+        '        )\n'
+        '\n'
+        '    # The Claude bridge runs as its own launchd service with its own secret and\n'
+        '    # its own port, so a stale Codex value inherited by a long-running Extella\n'
+        '    # worker must never be used here.\n'
+        '    secret = launch_environment("EXTELLA_CLAUDE_BRIDGE_SECRET") or os.environ.get(\n'
+        '        "EXTELLA_CLAUDE_BRIDGE_SECRET", ""\n'
+        '    )\n'
+        '    if len(secret.encode("utf-8")) < 32:\n'
+        '        return strict_json({"status": "error", "code": "bridge_not_configured", "message": "Local Claude bridge is not configured"})\n'
+        '    token = local_environment("EXTELLA_API_TOKEN")\n'
+        '    if len(token) < 8:\n'
+        '        return strict_json({"status": "error", "code": "extella_account_unavailable", "message": "Current Extella account is unavailable"})\n'
+        '    if not prompt or len(prompt) > 4000:\n'
+        '        return strict_json({"status": "error", "code": "invalid_prompt", "message": "prompt must contain 1..4000 characters"})\n'
+        '    conversation_suffix = conversation_id[4:] if conversation_id.startswith("ctx_") else ""\n'
+        '    if conversation_id and (\n'
+        '        len(conversation_suffix) < 32 or\n'
+        '        len(conversation_suffix) > 64 or\n'
+        '        any(not (character.isalnum() or character in "_-") for character in conversation_suffix)\n'
+        '    ):\n'
+        '        return strict_json({"status": "error", "code": "invalid_conversation_id", "message": "conversation_id is invalid"})\n'
+        '    known_execution_profiles = (\n'
+        '        "answer-only",\n'
+        '        "workspace-read",\n'
+        '        "web-research"\n'
+        '    )\n'
+        '    if execution_profile_id not in known_execution_profiles:\n'
+        '        return strict_json({\n'
+        '            "status": "error",\n'
+        '            "code": "execution_profile_unknown",\n'
+        '            "message": "Execution profile is not recognized"\n'
+        '        })\n'
+        '    if max_output_tokens < 1 or max_output_tokens > 2000:\n'
+        '        return strict_json({"status": "error", "code": "invalid_budget", "message": "max_output_tokens must be 1..2000"})\n'
+        '    if timeout_ms < 1000 or timeout_ms > 120000:\n'
+        '        return strict_json({"status": "error", "code": "invalid_budget", "message": "timeout_ms must be 1000..120000"})\n'
+        '    try:\n'
+        '        port = int(\n'
+        '            launch_environment("EXTELLA_CLAUDE_BRIDGE_PORT") or\n'
+        '            os.environ.get("EXTELLA_CLAUDE_BRIDGE_PORT", "0")\n'
+        '        )\n'
+        '    except Exception:\n'
+        '        return strict_json({"status": "error", "code": "bridge_port_invalid", "message": "Local Claude bridge port is invalid"})\n'
+        '    if port < 1024 or port > 65535:\n'
+        '        return strict_json({"status": "error", "code": "bridge_port_invalid", "message": "Local Claude bridge port is invalid"})\n'
+        '\n'
+        '    account_binding = hmac.new(\n'
+        '        secret.encode("utf-8"),\n'
+        '        ("extella-account-v1." + token).encode("utf-8"),\n'
+        '        hashlib.sha256\n'
+        '    ).hexdigest()\n'
+        '    token = ""\n'
+        '    event_id = "evt_" + uuid.uuid4().hex\n'
+        '    body = {\n'
+        '        "schema_version": "1.3",\n'
+        '        "event_id": event_id,\n'
+        '        "account_binding": account_binding,\n'
+        '        "capability": "general-assistance",\n'
+        '        "provider": "claude",\n'
+        '        "execution_profile_id": execution_profile_id,\n'
+        '        "prompt": prompt,\n'
+        '        "budget": {\n'
+        '            "max_output_tokens": max_output_tokens,\n'
+        '            "timeout_ms": timeout_ms\n'
+        '        }\n'
+        '    }\n'
+        '    if conversation_id:\n'
+        '        body["conversation_id"] = conversation_id\n'
+        '    raw = json.dumps(\n'
+        '        body,\n'
+        '        ensure_ascii=False,\n'
+        '        separators=(",", ":")\n'
+        '    ).encode("utf-8")\n'
+        '    timestamp = str(int(time.time()))\n'
+        '    nonce = uuid.uuid4().hex\n'
+        '    signed = timestamp.encode("utf-8") + b"." + nonce.encode("utf-8") + b"." + raw\n'
+        '    digest = hmac.new(\n'
+        '        secret.encode("utf-8"),\n'
+        '        signed,\n'
+        '        hashlib.sha256\n'
+        '    ).hexdigest()\n'
+        '    secret = ""\n'
+        '    request = urllib.request.Request(\n'
+        '        "http://127.0.0.1:" + str(port) + "/v1/delegate",\n'
+        '        data=raw,\n'
+        '        method="POST",\n'
+        '        headers={\n'
+        '            "Content-Type": "application/json",\n'
+        '            "X-Extella-Timestamp": timestamp,\n'
+        '            "X-Extella-Nonce": nonce,\n'
+        '            "X-Extella-Signature": "sha256=" + digest\n'
+        '        }\n'
+        '    )\n'
+        '    try:\n'
+        '        with urllib.request.urlopen(\n'
+        '            request,\n'
+        '            timeout=max(2, int(timeout_ms / 1000) + 5)\n'
+        '        ) as response:\n'
+        '            result = json.loads(response.read(65536).decode("utf-8"))\n'
+        '            if result.get("status") != "completed":\n'
+        '                return strict_json(result)\n'
+        '            if result.get("event_id") != event_id:\n'
+        '                return strict_json({"status": "error", "code": "bridge_event_mismatch", "message": "Bridge event mismatch"})\n'
+        '            return strict_json(result)\n'
+        '    except urllib.error.HTTPError as error:\n'
+        '        try:\n'
+        '            failure = json.loads(error.read(65536).decode("utf-8"))\n'
+        '            bridge_error = failure.get("error", {})\n'
+        '            result = {\n'
+        '                "status": "error",\n'
+        '                "code": str(bridge_error.get("code", "bridge_http_error"))[:80],\n'
+        '                "message": str(bridge_error.get("message", "Local Claude bridge rejected the request"))[:240]\n'
+        '            }\n'
+        '            if bridge_error.get("stage"):\n'
+        '                result["stage"] = str(bridge_error.get("stage"))[:80]\n'
+        '            if bridge_error.get("diagnostic_id"):\n'
+        '                result["diagnostic_id"] = str(bridge_error.get("diagnostic_id"))[:128]\n'
+        '            if isinstance(bridge_error.get("details"), dict):\n'
+        '                result["details"] = bridge_error.get("details")\n'
+        '            return strict_json(result)\n'
+        '        except Exception:\n'
+        '            return strict_json({"status": "error", "code": "bridge_http_error", "message": "Local Claude bridge rejected the request"})\n'
+        '    except urllib.error.URLError:\n'
+        '        return strict_json({\n'
+        '            "status": "error",\n'
+        '            "code": "bridge_unavailable",\n'
+        '            "message": "Local Claude bridge is unavailable"\n'
+        '        })\n'
+        '    except Exception:\n'
+        '        return strict_json({\n'
+        '            "status": "error",\n'
+        '            "code": "bridge_request_failed",\n'
+        '            "message": "Local Claude bridge request failed"\n'
+        '        })\n'
+    )
+    RULE_TEXT = 'EXTELLA_CLAUDE_ROUTING_V1: ВЫЗОВ CLAUDE. Вызывай run_expert с name="extella_claude_account_bridge_v1" и ОБЯЗАТЕЛЬНО global=true. Из обычного чата этого достаточно: targets НЕ указывай — вызов исполнится в контексте цели самого чата, то есть на машине пользователя. ЕСЛИ ОТВЕТ bridge_not_configured — значит вызов ушёл не на ту машину. Так бывает у внешних подключений, где цель по умолчанию чужая. Тогда, и только тогда: search_targets по описанию рабочего листенера, взять записи с available=true, проверить каждую вызовом моста с пустым prompt (ответ bridge_not_configured значит, что моста там нет, любой другой ответ моста значит, что он есть) и повторить вызов с targets=[device_id] найденной цели. Если search_targets вернул пусто — это не «целей нет», а «ты в чате»: вызывай без targets. Никогда не запоминай device_id между вызовами: устройства перерегистрируются, разрешай цель заново. ЕСЛИ ОТВЕТ Expert not found — Expert существует, но не разрешается в твоём скоупе. Повторять бесполезно, targets и pin не помогают. Сообщи об этом словами и остановись. Никогда не подставляй вместо моста другого агента на модели Claude: локальный мост и облачный Claude-агент — разные вещи, и пользователь просит именно мост. Не вызывай get_expert или search_experts заранее. ПАРАМЕТРЫ: prompt, conversation_id текущего чата, execution_profile_id. Используй execution_profile_id="answer-only", если пользователь явно не выбрал другой профиль, о котором мост сообщил как о доступном. Сохранённый conversation_id всегда сохраняет свой исходный execution_profile_id; чтобы сменить профиль, начни новый разговор с Claude. Никогда не передавай через Expert сырые флаги рантайма, инструментов, повторов, файловой системы, сети или оболочки. РЕЖИМ. По умолчанию режим Claude выключен. Разовая просьба вызвать или спросить Claude выполняет один вызов и режим не включает. Когда пользователь явно просит начать, войти или перейти в непрерывный диалог с Claude, вызови Claude и после успешного вызова считай режим Claude активным в этом чате. Пока режим активен, направляй каждое следующее сообщение пользователя прямо в Claude, не требуя упоминать Claude снова, и всегда переиспользуй conversation_id, полученный в этом же чате. Когда пользователь просит остановить, выйти или вернуться из режима Claude, не отправляй эту команду в Claude: выключи режим и ответь сам. ГРАНИЦЫ. Если conversation_id в этом чате ещё нет, опусти его — мост создаст новую сессию Claude. Никогда не переиспользуй conversation_id из другого чата и никогда не сокращай и не пересказывай историю сессии Claude. Никогда не используй run_agent и не запускай второго агента Extella. Не вызывай Claude, если пользователь явно не попросил или режим Claude в этом чате не активен.'
+    RULE_MARKER = "EXTELLA_CLAUDE_ROUTING_V1"
 
     # H17: every return path is a JSON string, never a dict. The page unwraps
     # two envelopes and a Python repr would reach it as unparsable text.
@@ -234,11 +424,104 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
             return "unpack_failed"
         return ""
 
+    # REST — штатный путь платформы; MCP у неё сейчас с проблемами, и команда
+    # работает через REST осознанно. Здесь он же и используется.
+    def core(path, payload, agent_id):
+        try:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            request = urllib.request.Request(
+                "https://api.extella.ai" + path, data=body, method="POST",
+                headers={"Content-Type": "application/json",
+                         "X-Auth-Token": ACCOUNT_TOKEN,
+                         "X-Profile-Id": "default",
+                         "X-Agent-Id": agent_id})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read(262144).decode("utf-8") or "{}")
+        except Exception:
+            return None
+
+    def stored_code(payload):
+        if isinstance(payload, dict):
+            for key in ("expert_code", "code"):
+                if isinstance(payload.get(key), str):
+                    return payload[key]
+            for key in ("content", "data", "result", "expert"):
+                found = stored_code(payload.get(key))
+                if found:
+                    return found
+        return ""
+
+    def agent_rows(payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            if isinstance(payload.get("agents"), list):
+                return payload["agents"]
+            for key in ("content", "data", "result"):
+                rows = agent_rows(payload.get(key))
+                if rows:
+                    return rows
+        return []
+
+    # Каждая копия — своя запись в своём скоупе. Замер 17.08.2026: несколько
+    # записей одного имени с global=false сосуществуют и изолированы полностью,
+    # каждый скоуп исполняет свою. global=true так не работает: читается
+    # отовсюду, исполняется только из скоупа последнего сохранения.
+    #
+    # Поэтому раздача и обновление — один и тот же шаг, и каждая копия
+    # сверяется посимвольно. Иначе одна отставшая копия даёт молча старое
+    # поведение у одного агента.
+    def provision_scopes(code, rule_text):
+        listed = core("/api/agent/list", {}, "agent_XXXXXXXX")
+        rows = agent_rows(listed)
+        if not rows:
+            return None, "agent_list_failed"
+        written = []
+        skipped_public = []
+        failed = []
+        for row in rows:
+            agent_id = str(row.get("id") or row.get("agent_id") or "")
+            if not agent_id.startswith("agent_"):
+                continue
+            detail = core("/api/agent/get", {"agent_id": agent_id}, agent_id) or {}
+            info = detail.get("agent") or detail.get("content") or detail
+            if info.get("isPublic") is True or info.get("is_public") is True:
+                # Публичный агент — общий платформенный объект; аккаунтная
+                # запись в него не закрепится, и отчитываться об успехе нельзя.
+                skipped_public.append(agent_id)
+                continue
+            saved = core("/api/expert/save", {
+                "name": BRIDGE_EXPERT,
+                "description": "Delegate a bounded text task to local Claude Code.",
+                "code": code, "cspl": "fython", "global": False,
+                "kwargs": {"prompt": "", "conversation_id": "",
+                           "execution_profile_id": "answer-only",
+                           "max_output_tokens": 2000, "timeout_ms": 120000},
+            }, agent_id)
+            if not saved:
+                failed.append(agent_id)
+                continue
+            back = core("/api/expert/get", {"name": BRIDGE_EXPERT, "global": False}, agent_id)
+            if stored_code(back).strip() != code.strip():
+                failed.append(agent_id)
+                continue
+            written.append(agent_id)
+            if rule_text:
+                rules = core("/api/rules/list", {}, agent_id) or {}
+                have = False
+                for item in (rules.get("rules") or rules.get("results") or []):
+                    if str(item.get("rule") or item.get("text") or "").startswith(RULE_MARKER):
+                        have = True
+                if not have:
+                    core("/api/rules/add", {"rule": rule_text}, agent_id)
+        return {"written": written, "skipped_public": skipped_public, "failed": failed}, ""
+
     def handle_for(value):
         import hashlib
         digest = hashlib.sha256(("extella-mcp-account-v1." + value).encode("utf-8")).hexdigest()
         return "acct_" + digest[:12]
 
+    ACCOUNT_TOKEN = token_from_disk()
     claude = find("claude")
     if platform.system() != "Darwin":
         return result("error", "unsupported_os", "Автоматическая установка пока поддерживает только macOS.")
@@ -352,6 +635,33 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                       "Аккаунт Extella подключён отдельным соединением.",
                       mcp_server=server, account_handle=handle)
 
+    if action == "agents":
+        # Раздача всем изменяемым агентам, а не одному и не по выбору
+        # пользователя. Покупатель заранее не знает, из какого чата позовёт, а
+        # «выбери агентов» требует понимания скоупов, которого у него нет.
+        # Раздача и обновление — один шаг, каждая копия сверяется посимвольно.
+        if len(ACCOUNT_TOKEN) < 8:
+            return result("error", "extella_token_unavailable",
+                          "Текущий аккаунт Extella недоступен.")
+        report, problem = provision_scopes(BRIDGE_CODE, RULE_TEXT)
+        if problem:
+            return result("error", problem, "Не удалось прочитать список агентов Extella.")
+        if report["failed"]:
+            return result("error", "scope_provisioning_incomplete",
+                          "Часть агентов не получила мост: обновите приложение и повторите.",
+                          written=len(report["written"]),
+                          failed=len(report["failed"]),
+                          skipped_public=len(report["skipped_public"]))
+        if not report["written"]:
+            return result("error", "no_writable_agent",
+                          "В аккаунте нет агентов, которым можно выдать мост.",
+                          skipped_public=len(report["skipped_public"]))
+        return result("success", "agents_provisioned",
+                      "Мост выдан агентам Extella.",
+                      written=len(report["written"]),
+                      skipped_public=len(report["skipped_public"]),
+                      note="публичные системные агенты не изменяются намеренно")
+
     if action == "bridge":
         # `__file__` не существует в Fython, и даже с ним каталога рядом нет:
         # Expert — запись в базе. Рантайм приезжает архивом листинга и
@@ -428,6 +738,8 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         if probe != "authorised":
             return result("error", "mcp_probe_inconclusive",
                           "Не удалось подтвердить авторизацию соединения Extella MCP.")
+        provisioned = core("/api/expert/get", {"name": BRIDGE_EXPERT, "global": False},
+                           validate_token(ACCOUNT_TOKEN) or "agent_XXXXXXXX")
         listed = run([claude, "mcp", "list"], timeout=60)
         # Presence only. The connected label in this output is not evidence of
         # authentication; the binding above is what proves the account.
@@ -463,6 +775,8 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         if probe != "authorised":
             return result("error", "mcp_probe_inconclusive",
                           "Не удалось подтвердить авторизацию соединения Extella MCP.")
+        provisioned = core("/api/expert/get", {"name": BRIDGE_EXPERT, "global": False},
+                           validate_token(ACCOUNT_TOKEN) or "agent_XXXXXXXX")
         listed = run([claude, "mcp", "list"], timeout=60)
         port_probe = run(["/bin/launchctl", "getenv", "EXTELLA_CLAUDE_BRIDGE_PORT"], timeout=20)
         port = (port_probe.stdout or "").strip() if port_probe else ""

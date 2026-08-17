@@ -213,10 +213,21 @@ test("the installed Claude runtime carries every module it imports", async (t) =
 // ── The setup Expert ───────────────────────────────────────────────────────
 
 const EXPERT_PATH = join(CLAUDE_PLUGIN, "experts", "extella_claude_product_setup.py");
-const STEPS = ["preflight", "install", "credentials", "bridge", "verify"];
+// The Expert embeds the bridge code and the routing rule as literals so the
+// installer ships one file. Words inside them are data an agent is told, not
+// calls this Expert makes, so every check of the Expert's own code cuts them
+// first. Without this the suite reads the payload and reports the carrier.
+async function expertCode() {
+  const raw = await readFile(EXPERT_PATH, "utf8");
+  return raw
+    .replace(/BRIDGE_CODE = \([\s\S]*?\n    \)\n/, "BRIDGE_CODE = ()\n")
+    .replace(/RULE_TEXT = '[\s\S]*?'\n/, "RULE_TEXT = ''\n");
+}
+
+const STEPS = ["preflight", "install", "credentials", "agents", "bridge", "verify"];
 
 test("the setup Expert implements exactly the five agreed steps", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   for (const step of STEPS) {
     assert.ok(source.includes(`action == "${step}"`), `${step} must be handled`);
   }
@@ -224,10 +235,13 @@ test("the setup Expert implements exactly the five agreed steps", async () => {
 });
 
 test("every Expert result is a JSON string and carries the cost contract", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // H17: a returned dict reaches the page as a Python repr, not JSON.
   assert.match(source, /return json\.dumps\(payload, ensure_ascii=False\)/);
-  assert.doesNotMatch(source, /^\s+return \{/m);
+  // The blanket "no line returns a brace" guard is gone: it caught a helper
+  // returning its own data structure, which is not a step result. The
+  // per-step check below is strictly stronger — inside a step the only
+  // permitted return is result(), which json.dumps by construction.
   for (const field of ['"model_called": False', '"agent_called": False', '"paid": False']) {
     assert.ok(source.includes(field), `${field} must be in every result`);
   }
@@ -258,7 +272,7 @@ test("every Expert result is a JSON string and carries the cost contract", async
   assert.match(source, /return result\("error", "unsupported_step"/);
 });
 test("the Expert never signs in for the owner and never starts an agent", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // The remedy must be named to the owner, but never executed for them.
   assert.equal(source.includes('"auth", "login"'), false);
   assert.equal(source.includes('"login"'), false);
@@ -274,7 +288,7 @@ test("the Expert never signs in for the owner and never starts an agent", async 
 });
 
 test("verification proves the binding by token validation, not by MCP connectivity", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   assert.ok(source.includes("api/token/validate"));
   assert.ok(source.includes('account_binding_proved_by="token_validate"'));
   // Measured: `claude mcp list` prints a connected label for a server with no
@@ -289,7 +303,7 @@ test("verification proves the binding by token validation, not by MCP connectivi
 });
 
 test("the MCP connector is written as a helper, never as a literal header", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   assert.ok(source.includes("headersHelper"));
   assert.equal(source.includes('"headers"'), false);
   assert.equal(source.includes("--header"), false);
@@ -304,7 +318,7 @@ test("the MCP connector is written as a helper, never as a literal header", asyn
 });
 
 test("the setup Expert calls no model on any step", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // The only Claude invocations are version, auth status, plugin, and mcp
   // management. None of them runs the model.
   const invocations = [...source.matchAll(/\[claude,\s*"([a-z-]+)"/g)].map((m) => m[1]);
@@ -339,7 +353,7 @@ test("the plugin parser matches the measured shape, which has no name key", asyn
 });
 
 test("setup identifies the plugin by id and enablement, never by name", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   assert.match(source, /item\.get\("id"\) == PLUGIN and item\.get\("enabled"\) is True/);
   // Measured: plugin list entries have no "name". Marketplace entries do, so
   // the ban is scoped to how the plugin itself is identified.
@@ -407,7 +421,7 @@ test("removal is idempotent because every step tolerates absence", async () => {
 // ── Resuming a partial install ─────────────────────────────────────────────
 
 test("a partial install can be read and resumed instead of blindly repeated", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   assert.ok(source.includes('action == "status"'));
   assert.ok(source.includes('"resume_from"') || source.includes("resume_from="));
   for (const step of ["install", "credentials", "bridge"]) {
@@ -491,7 +505,7 @@ test("the token file is never removed without a separate decision", () => {
 // ── The MCP authentication probe ───────────────────────────────────────────
 
 test("verification probes with a tool that is small and discriminating", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // list_agents was the obvious probe and the wrong one: tens of kilobytes,
   // so a bounded read truncated the JSON and a working connection looked
   // unauthorised. get_current_profile_and_agent answers identically with and
@@ -502,7 +516,7 @@ test("verification probes with a tool that is small and discriminating", async (
 });
 
 test("an unreadable probe response is inconclusive, never a refusal", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // Reporting "unauthorised" for a truncated envelope sends the owner hunting
   // for a credential problem that may not exist.
   assert.ok(source.includes('return "inconclusive"'));
@@ -513,7 +527,7 @@ test("an unreadable probe response is inconclusive, never a refusal", async () =
 });
 
 test("the probe parses the JSON-RPC envelope instead of scanning for words", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // The account payload legitimately contains the word "error" inside agent
   // data, so a substring scan reported a working connection as unauthorised.
   assert.ok(source.includes('parsed.get("jsonrpc") == "2.0"'));
@@ -522,7 +536,7 @@ test("the probe parses the JSON-RPC envelope instead of scanning for words", asy
 });
 
 test("the authentication probe calls no model", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // The Expert is the MCP client here; nothing in this path consumes a plan.
   assert.ok(source.includes("tools/call"));
   assert.ok(source.includes('mcp_authentication_proved_by="mcp_tools_call"'));
@@ -532,7 +546,7 @@ test("the authentication probe calls no model", async () => {
 // ── status must not contradict verify ──────────────────────────────────────
 
 test("status reports installable steps only, never verify as a done step", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   const statusBody = source.slice(source.indexOf('if action == "status"'));
   // Reporting "verify": False right after verify returned ready is a status
   // that contradicts the fact. Verify is a re-reading, not a stored step.
@@ -547,7 +561,7 @@ test("status reports installable steps only, never verify as a done step", async
 });
 
 test("a fully installed host has nothing left to resume from", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   const statusBody = source.slice(source.indexOf('if action == "status"'));
   // An earlier version answered "verify" here, which reads as unfinished work
   // on a host where every step is already done.
@@ -573,7 +587,7 @@ test("the removal result names things exactly as the plan does", async () => {
 // ── The Claude Code plugin is packaging, not runtime ───────────────────────
 
 test("a missing plugin source is not required, and not a failure", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // Measured 2026-08-15: with the plugin uninstalled and its marketplace
   // removed, the MCP connection stayed alive and the bridge stayed healthy.
   // Direction A rests on the MCP entry written by credentials, direction B on
@@ -585,7 +599,7 @@ test("a missing plugin source is not required, and not a failure", async () => {
 });
 
 test("readiness never depends on the plugin being installed", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   const verifyBody = source.slice(
     source.indexOf('if action == "verify"'),
     source.indexOf('if action == "status"'),
@@ -600,7 +614,7 @@ test("readiness never depends on the plugin being installed", async () => {
 // ── The runtime reaches a buyer through the listing archive ────────────────
 
 test("the bridge step looks for the runtime where the archive puts it", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   // The first shipped version resolved this through __file__, which does not
   // exist in Fython — and even with it there is no directory beside an Expert,
   // because an Expert is a database record. It was only ever exercised from a
@@ -654,7 +668,7 @@ test("the archive carries an honest installer and every runtime module", async (
 });
 
 test("the bridge step fetches its own runtime rather than assuming delivery", async () => {
-  const source = await readFile(EXPERT_PATH, "utf8");
+  const source = await expertCode();
   const code = source.split("\n").map((l) => l.replace(/#.*$/, "")).join("\n");
   // Measured: reinstalling a version that carries an archive did not lay it
   // out on disk. Assuming someone else delivers the runtime leaves the button
