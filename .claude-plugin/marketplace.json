@@ -11,7 +11,12 @@
   "plugins": [
     {
       "name": "extella-claude-bridge",
-      "source": "./plugins/extella-claude-bridge",
+      "source": {
+        "source": "github",
+        "owner": "AnvarBakiyev",
+        "repo": "extella-codex-bridge",
+        "ref": "v0.4.1"
+      },
       "description": "Connect Claude Code to Extella MCP, one connection per Extella account, and expose the signed local Extella bridge contract.",
       "version": "0.1.0-poc",
       "keywords": [

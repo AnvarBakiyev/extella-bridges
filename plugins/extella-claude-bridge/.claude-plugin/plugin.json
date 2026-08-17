@@ -1,6 +1,6 @@
 {
   "name": "extella-claude-bridge",
-  "version": "0.1.0-poc",
+  "version": "0.4.0",
   "description": "Extella integration for Claude Code: one MCP connection per Extella account, with no token stored in the plugin.",
   "author": {
     "name": "Anvar Bakiyev"
@@ -8,5 +8,9 @@
   "homepage": "https://github.com/AnvarBakiyev/extella-agent-standards",
   "repository": "https://github.com/AnvarBakiyev/extella-codex-bridge",
   "license": "MIT",
-  "keywords": ["extella", "mcp", "bridge"]
+  "keywords": [
+    "extella",
+    "mcp",
+    "bridge"
+  ]
 }
