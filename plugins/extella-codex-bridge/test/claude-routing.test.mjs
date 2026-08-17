@@ -196,3 +196,27 @@ test("no step claims to publish the Expert as a model tool", async () => {
   assert.ok(rule.includes("run_expert"));
   assert.equal(rule.includes("напрямую"), false, "no direct-tool promise remains");
 });
+test("the rule states the limits and the manual way around them", async () => {
+  const source = await readFile(INSTALLER, "utf8");
+  const declarations = source.slice(
+    source.indexOf("var ROUTING_RULE_MARKER"),
+    source.indexOf("var _running"),
+  );
+  const rule = Function(`${declarations}\nreturn ROUTING_RULE_TEXT;`)();
+
+  // The agent reads the rule before answering and never reads the product page,
+  // so a limit documented only on the page does not exist for it. Measured
+  // symptom: on refusal it invented "Claude is unavailable" instead of naming
+  // the real cause and the manual step.
+  assert.ok(rule.includes("ОГРАНИЧЕНИЯ"));
+  // A laptop that is asleep is not a transient error to retry.
+  assert.ok(rule.includes("ждать бесполезно"));
+  // The likeliest complaint: an agent created after the install has no bridge.
+  assert.ok(rule.includes("Обновить раздачу"));
+  assert.ok(rule.includes("не предлагай переустановку"));
+  assert.ok(rule.includes("Публичным агентам"));
+  // The plugin is optional; claiming otherwise sends people to an install that
+  // needs a GitHub SSH key (D5).
+  assert.ok(rule.includes("опционален"));
+  assert.equal(UUID.test(rule), false);
+});
