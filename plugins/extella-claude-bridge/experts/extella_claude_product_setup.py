@@ -1,4 +1,5 @@
-def extella_claude_product_setup(action: str = "preflight", marketplace_path: str = "") -> str:
+def extella_claude_product_setup(action: str = "preflight", marketplace_path: str = "",
+                                 offset: int = 0, limit: int = 0) -> str:
     import json, os, platform, shutil, subprocess, urllib.request
 
     MARKETPLACE = "extella-claude"
@@ -11,7 +12,11 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     MCP_DIR = os.path.join(HOME, ".extella", "mcp")
     BRIDGE_EXPERT = "extella_claude_account_bridge_v1"
     BRIDGE_CODE = (
-        '$extens("include.py")\n'
+        # Fython обрабатывает $-директивы до разбора строк, поэтому литерал,
+        # начинающийся с $extens, обрывается прямо здесь: [Execution Error]
+        # unterminated string literal (detected at line 14). Склейка прячет
+        # директиву от препроцессора, а итоговая строка не меняется.
+        '$' + 'extens("include.py")\n'
         'include("import os", [])\n'
         'include("import json", [])\n'
         'include("import time", [])\n'
@@ -474,11 +479,21 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     # правила в каждом скоупе была бы 37 единицами мусора, которые потом
     # расходятся. Скоупным приходится делать только Expert, потому что у него
     # расходятся чтение и исполнение.
-    def provision_scopes(code):
+    # Раздача идёт порциями. Замер 17.08.2026: полный проход по 39 агентам
+    # занимает больше минуты, и платформа откладывает такой вызов в задачу,
+    # отвечая "deferred, use task_id as reference". Страница получает вместо
+    # результата ссылку на задачу и показывает отказ. Порция укладывается в
+    # обычный ответ, а вызывающий сам идёт по списку и складывает числа.
+    def provision_scopes(code, offset=0, limit=0):
         listed = core("/api/agent/list", {}, "agent_XXXXXXXX")
         rows = agent_rows(listed)
         if not rows:
             return None, "agent_list_failed"
+        total = len(rows)
+        if limit > 0:
+            rows = rows[offset:offset + limit]
+        elif offset > 0:
+            rows = rows[offset:]
         written = []
         runnable = []
         not_runnable = []
@@ -526,7 +541,8 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                 not_runnable.append(agent_id)
         return {"written": written, "runnable": runnable,
                 "not_runnable": not_runnable,
-                "skipped_public": skipped_public, "failed": failed}, ""
+                "skipped_public": skipped_public, "failed": failed,
+                "total": total, "next_offset": offset + len(rows)}, ""
 
     def handle_for(value):
         import hashlib
@@ -655,7 +671,10 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         if len(ACCOUNT_TOKEN) < 8:
             return result("error", "extella_token_unavailable",
                           "Текущий аккаунт Extella недоступен.")
-        report, problem = provision_scopes(BRIDGE_CODE)
+        # Порция по умолчанию подобрана по замеру: один агент — четыре вызова
+        # ядра, восемь укладываются в обычный ответ с запасом.
+        report, problem = provision_scopes(BRIDGE_CODE, int(offset or 0),
+                                           int(limit or 8))
         if problem:
             return result("error", problem, "Не удалось прочитать список агентов Extella.")
         if report["failed"]:
@@ -664,7 +683,10 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                           written=len(report["written"]),
                           failed=len(report["failed"]),
                           skipped_public=len(report["skipped_public"]))
-        if not report["runnable"]:
+        # Пустая порция — не отказ: в ней могли оказаться одни публичные агенты.
+        # Отказ — когда по всему списку не запустился никто.
+        finished = report["next_offset"] >= report["total"]
+        if finished and not report["runnable"] and int(offset or 0) == 0:
             return result("error", "no_runnable_scope",
                           "Ни один агент не смог запустить мост после выдачи.",
                           written=len(report["written"]),
@@ -675,6 +697,9 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                       runnable=len(report["runnable"]),
                       not_runnable=len(report["not_runnable"]),
                       skipped_public=len(report["skipped_public"]),
+                      total=report["total"],
+                      next_offset=report["next_offset"],
+                      finished=finished,
                       note="запись проверена запуском, а не только чтением")
 
     if action == "bridge":

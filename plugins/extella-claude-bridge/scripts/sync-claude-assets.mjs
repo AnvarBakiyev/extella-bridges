@@ -42,9 +42,12 @@ function replaceArray(source, name, code) {
   if (!assignment.test(source)) {
     throw new Error(`Could not locate ${name} in the adapter`);
   }
+  // Замена функцией, а не строкой: в строке замены `$'` означает «всё, что
+  // после совпадения», и код Expert'а, содержащий `'$' + '…'`, вставлялся
+  // изувеченным — тест ловил это как испорченный синтаксис, а не как опечатку.
   return source.replace(
     assignment,
-    `$1[\n${javascriptLines(code)}\n  ].join('\\n');`,
+    (_, prefix) => `${prefix}[\n${javascriptLines(code)}\n  ].join('\\n');`,
   );
 }
 
@@ -53,7 +56,7 @@ function replaceHash(source, name, digest) {
   if (!assignment.test(source)) {
     throw new Error(`Could not locate ${name} in the adapter`);
   }
-  return source.replace(assignment, `$1${digest}$2`);
+  return source.replace(assignment, (_, prefix, suffix) => `${prefix}${digest}${suffix}`);
 }
 
 async function main() {
