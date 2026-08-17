@@ -221,16 +221,44 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         """PATH из логин-оболочки: он знает про nvm, asdf, volta и прочее,
         чего в жёстком списке быть не может."""
         shell = os.environ.get("SHELL") or "/bin/zsh"
-        try:
-            completed = subprocess.run(
-                [shell, "-lc", "printf %s \"$PATH\""],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, timeout=15, shell=False)
-        except Exception:
-            return []
-        if not completed or completed.returncode != 0:
-            return []
-        return [part for part in (completed.stdout or "").split(":") if part.startswith("/")]
+        # Сначала интерактивный логин-шелл, потом просто логин. Замер
+        # 17.08.2026 на машине коллеги: claude стоял в
+        # ~/.nvm/versions/node/v24.16.0/bin, а "-lc" его не показал — zsh с
+        # "-l" читает .zprofile и .zlogin, но НЕ .zshrc, а nvm настраивается
+        # именно в .zshrc. Поэтому одного "-lc" мало.
+        for flags in ("-ilc", "-lc"):
+            try:
+                completed = subprocess.run(
+                    [shell, flags, "printf %s \"$PATH\""],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, timeout=20, shell=False)
+            except Exception:
+                continue
+            if completed and completed.returncode == 0:
+                dirs = [part for part in (completed.stdout or "").split(":")
+                        if part.startswith("/")]
+                if dirs:
+                    return dirs
+        return []
+
+    def version_manager_dirs():
+        """Каталоги менеджеров версий node. Нужны отдельно: если оболочка
+        молчит, глобус находит их и без неё."""
+        found = []
+        for base in [os.path.join(HOME, ".nvm", "versions", "node"),
+                     os.path.join(HOME, ".fnm", "node-versions"),
+                     os.path.join(HOME, "n", "versions", "node"),
+                     os.path.join(HOME, ".volta", "tools", "image", "node")]:
+            try:
+                entries = sorted(os.listdir(base))
+            except Exception:
+                continue
+            for entry in entries:
+                for tail in ((entry, "bin"), (entry, "installation", "bin")):
+                    candidate = os.path.join(base, *tail)
+                    if os.path.isdir(candidate):
+                        found.append(candidate)
+        return found
 
     def candidate_roots():
         roots = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
@@ -242,8 +270,16 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                  os.path.join(HOME, ".bun", "bin"),
                  os.path.join(HOME, ".volta", "bin"),
                  os.path.join(HOME, "Library", "pnpm"),
-                 os.path.join(HOME, ".yarn", "bin")]
-        return roots + shell_path_dirs()
+                 os.path.join(HOME, ".yarn", "bin"),
+                 os.path.join(HOME, ".asdf", "shims")]
+        # Порядок: жёсткий список, затем менеджеры версий, затем PATH оболочки.
+        # Дубликаты убираются с сохранением порядка — иначе отказ печатает один
+        # и тот же каталог по пять раз и читается как мусор.
+        ordered = []
+        for root in roots + version_manager_dirs() + shell_path_dirs():
+            if root not in ordered:
+                ordered.append(root)
+        return ordered
 
     def find(name):
         found = shutil.which(name)
