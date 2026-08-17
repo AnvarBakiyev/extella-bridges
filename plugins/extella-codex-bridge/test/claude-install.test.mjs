@@ -685,3 +685,18 @@ test("the bridge step fetches its own runtime rather than assuming delivery", as
   assert.ok(code.includes('name.startswith("scripts/")'));
   assert.ok(code.includes("0o600"));
 });
+
+test("provisioning is verified by running the copy, not by reading it back", async () => {
+  const source = await expertCode();
+  // Measured 17.08.2026: one scope out of 38 read back byte-identical and still
+  // answered "Expert not found" on run. Reading proves storage, not
+  // runnability — the same false green this suite exists to catch, found in
+  // this step's own verification.
+  assert.ok(source.includes('"params": {"prompt": ""}'));
+  assert.ok(source.includes("runnable"));
+  assert.ok(source.includes("not_runnable"));
+  assert.ok(source.includes("no_runnable_scope"));
+  // A bridge answer of either kind proves the Expert executed; only a missing
+  // Expert counts as not runnable.
+  assert.ok(source.includes('"invalid_prompt" in answer or "bridge_not_configured" in answer'));
+});
