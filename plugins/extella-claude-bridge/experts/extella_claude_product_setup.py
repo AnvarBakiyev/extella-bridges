@@ -212,13 +212,44 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         payload.update(extra)
         return json.dumps(payload, ensure_ascii=False)
 
+    # Приложение запускается из Finder, а не из терминала, и наследует
+    # PATH=/usr/bin:/bin:/usr/sbin:/sbin. Поэтому shutil.which почти всегда
+    # промахивается, и всё решает список ниже. Замер 17.08.2026: у владельца
+    # claude лежит в ~/.local/bin и находится, у коллеги — «не установлен»
+    # при установленном Claude, то есть каталог просто не входил в список.
+    def shell_path_dirs():
+        """PATH из логин-оболочки: он знает про nvm, asdf, volta и прочее,
+        чего в жёстком списке быть не может."""
+        shell = os.environ.get("SHELL") or "/bin/zsh"
+        try:
+            completed = subprocess.run(
+                [shell, "-lc", "printf %s \"$PATH\""],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=15, shell=False)
+        except Exception:
+            return []
+        if not completed or completed.returncode != 0:
+            return []
+        return [part for part in (completed.stdout or "").split(":") if part.startswith("/")]
+
+    def candidate_roots():
+        roots = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                 os.path.join(HOME, ".local", "bin"),
+                 os.path.join(HOME, ".npm-global", "bin"),
+                 # Собственная локальная установка Claude Code и типовые
+                 # менеджеры пакетов — самые частые места после homebrew.
+                 os.path.join(HOME, ".claude", "local"),
+                 os.path.join(HOME, ".bun", "bin"),
+                 os.path.join(HOME, ".volta", "bin"),
+                 os.path.join(HOME, "Library", "pnpm"),
+                 os.path.join(HOME, ".yarn", "bin")]
+        return roots + shell_path_dirs()
+
     def find(name):
         found = shutil.which(name)
         if found:
             return found
-        for root in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
-                     os.path.join(HOME, ".local", "bin"),
-                     os.path.join(HOME, ".npm-global", "bin")]:
+        for root in candidate_roots():
             candidate = os.path.join(root, name)
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
@@ -554,7 +585,14 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     if platform.system() != "Darwin":
         return result("error", "unsupported_os", "Автоматическая установка пока поддерживает только macOS.")
     if not claude:
-        return result("error", "claude_not_installed", "Claude Code не установлен на этом компьютере.")
+        # Сообщение называет, где искали: «не установлен» при установленном
+        # Claude — это тупик, из которого пользователю некуда шагнуть.
+        return result("error", "claude_not_installed",
+                      "Claude Code не найден. Искали в: " +
+                      ", ".join(candidate_roots()[:14]) +
+                      ". Если claude лежит не там, покажите вывод команды "
+                      "«which claude» в терминале.",
+                      searched=len(candidate_roots()))
 
     if action == "preflight":
         version = run([claude, "--version"], timeout=20)
