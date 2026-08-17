@@ -240,3 +240,33 @@ test("the shipped manifest declares a source this project accepts", async () => 
   assert.ok(plugin, "the plugin must be listed");
   assert.notEqual(describeSource(plugin.source).kind, "invalid");
 });
+
+// ── The storefront channel ─────────────────────────────────────────────────
+
+test("the Claude channel is fail-closed and mirrors the Codex one", async () => {
+  const source = await readFile(
+    resolve(import.meta.dirname, "..", "integrations", "extella-desktop", "marketplace.js"),
+    "utf8");
+  const channel = source.slice(
+    source.indexOf("if (e.data.type === 'etb_claude_install')"),
+    source.indexOf("if (e.data.type === 'etb_codex_status')"),
+  );
+  assert.ok(channel.length > 500, "both Claude channels must be present");
+
+  // The iframe supplies nothing but a request id: no Expert name, command,
+  // repository, ref, credential, port, or device.
+  assert.ok(channel.includes("e.source !== _lf.contentWindow"));
+  assert.ok(channel.includes("e.source !== _lsf.contentWindow"));
+  assert.ok(channel.includes("String(e.data.reqId"));
+  for (const forbidden of ["e.data.name", "e.data.expert", "e.data.code",
+                           "e.data.command", "e.data.target", "e.data.token"]) {
+    assert.equal(channel.includes(forbidden), false, `${forbidden} must not be read`);
+  }
+  // A missing installer answers with a code instead of silence.
+  assert.ok(channel.includes("installer_unavailable"));
+  assert.ok(channel.includes("etb_claude_status_result"));
+
+  // Nothing of the Codex channel was disturbed.
+  assert.ok(source.includes("etb_codex_install"));
+  assert.ok(source.includes("etb_codex_status"));
+});
