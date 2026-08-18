@@ -208,7 +208,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить
     # «исправление не помогло» от «отвечает старая версия», и мы потеряли на
     # этом два круга переписки с пользователем.
-    SETUP_VERSION = "3.2.7"
+    SETUP_VERSION = "3.2.8"
 
     def result(status, code, message, **extra):
         payload = {"status": status, "code": code, "message": message,
@@ -654,13 +654,26 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
         version = run([claude, "--version"], timeout=20)
         if not version or version.returncode != 0:
             return result("error", "claude_version_check_failed", "Не удалось запустить Claude Code CLI.")
+        # Замер 18.08.2026 на 2.1.210: у невошедшего пользователя команда
+        # печатает корректный JSON {"loggedIn": false} и завершается с КОДОМ 1.
+        # Проверка кода возврата превращала самое обычное состояние — «не
+        # выполнен вход» — в «не удалось проверить вход», то есть в тупик
+        # вместо инструкции. Поэтому сначала читаем вывод, и только если он
+        # неразборчив, смотрим на код.
         status = run([claude, "auth", "status", "--json"], timeout=30)
-        if not status or status.returncode != 0:
+        if not status:
             return result("error", "claude_auth_check_failed", "Не удалось проверить вход в Claude Code.")
         try:
-            logged_in = json.loads(status.stdout or "{}").get("loggedIn") is True
+            reported = json.loads(status.stdout or "")
         except Exception:
+            reported = None
+        if not isinstance(reported, dict):
+            if status.returncode != 0:
+                return result("error", "claude_auth_check_failed",
+                              "Не удалось проверить вход в Claude Code: " +
+                              ((status.stderr or status.stdout or "").strip()[:160] or "пустой ответ"))
             return result("error", "claude_auth_status_invalid", "Claude Code вернул неразборчивый статус входа.")
+        logged_in = reported.get("loggedIn") is True
         if not logged_in:
             # Never performed automatically: signing in is the owner's action.
             return result("error", "claude_auth_required",
