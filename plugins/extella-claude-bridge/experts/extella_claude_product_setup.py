@@ -208,7 +208,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить
     # «исправление не помогло» от «отвечает старая версия», и мы потеряли на
     # этом два круга переписки с пользователем.
-    SETUP_VERSION = "3.2.6"
+    SETUP_VERSION = "3.2.7"
 
     def result(status, code, message, **extra):
         payload = {"status": status, "code": code, "message": message,
@@ -299,10 +299,11 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
 
     def safe_env():
         env = dict(os.environ)
-        env["PATH"] = ":".join(["/opt/homebrew/bin", "/usr/local/bin",
-                                "/usr/bin", "/bin",
-                                os.path.join(HOME, ".local", "bin"),
-                                env.get("PATH", "")])
+        # Те же каталоги, в которых мы ищем CLI, обязаны быть в PATH при его
+        # запуске: claude, поставленный через nvm, — это js-скрипт, которому
+        # нужен node из соседнего каталога. Иначе он падает с "env: node:
+        # No such file or directory", а это читается как «CLI сломан».
+        env["PATH"] = ":".join(candidate_roots() + [env.get("PATH", "")])
         env["NO_COLOR"] = "1"
         for key in ["EXTELLA_API_TOKEN", "EXTELLA_SECONDARY_API_TOKEN",
                     "EXTELLA_BRIDGE_SECRET", "EXTELLA_CLAUDE_BRIDGE_SECRET",
@@ -629,12 +630,25 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     if not claude:
         # Сообщение называет, где искали: «не установлен» при установленном
         # Claude — это тупик, из которого пользователю некуда шагнуть.
+        # Диагностика в самом отказе: домашний каталог, каким его видит
+        # установщик, и что он находит в nvm. Терминал и установщик могут
+        # смотреть на разные машины — буквально, если Expert исполняется не
+        # там, где сидит человек.
+        try:
+            nvm_seen = sorted(os.listdir(os.path.join(HOME, ".nvm", "versions", "node")))
+        except Exception:
+            nvm_seen = []
         return result("error", "claude_not_installed",
-                      "Claude Code не найден. Искали в: " +
-                      ", ".join(candidate_roots()[:14]) +
-                      ". Если claude лежит не там, покажите вывод команды "
-                      "«which claude» в терминале.",
-                      searched=len(candidate_roots()))
+                      "Claude Code не найден. HOME=" + HOME +
+                      "; каталогов в поиске: " + str(len(candidate_roots())) +
+                      "; PATH из оболочки прочитан: " +
+                      ("да" if shell_path_dirs() else "НЕТ") +
+                      "; nvm-версий видно: " + (", ".join(nvm_seen) if nvm_seen else "ни одной") +
+                      ". Пришлите эту строку целиком.",
+                      searched=len(candidate_roots()),
+                      home=HOME,
+                      shell_path_read=bool(shell_path_dirs()),
+                      nvm_versions=nvm_seen[:8])
 
     if action == "preflight":
         version = run([claude, "--version"], timeout=20)
