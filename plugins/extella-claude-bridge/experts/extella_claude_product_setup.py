@@ -205,9 +205,15 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
 
     # H17: every return path is a JSON string, never a dict. The page unwraps
     # two envelopes and a Python repr would reach it as unparsable text.
+    # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить
+    # «исправление не помогло» от «отвечает старая версия», и мы потеряли на
+    # этом два круга переписки с пользователем.
+    SETUP_VERSION = "3.2.6"
+
     def result(status, code, message, **extra):
         payload = {"status": status, "code": code, "message": message,
-                   "step": action, "model_called": False,
+                   "step": action, "setup_version": SETUP_VERSION,
+                   "model_called": False,
                    "agent_called": False, "paid": False}
         payload.update(extra)
         return json.dumps(payload, ensure_ascii=False)

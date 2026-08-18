@@ -11,7 +11,7 @@
 
 ETB.claudeInstaller = (function () {
   var EXPERT_NAME = 'extella_claude_product_setup';
-  var EXPERT_SHA256 = 'f61411c613326de94335fe394a3e4796c679b31d74a8470f3047a83fbdb5b72c';
+  var EXPERT_SHA256 = '6777c9cc9eb22f09ee00099bad5e20f556363b6c637d9ed41481c27e07d25a71';
   var PLUGIN_VERSION = '0.1.0-poc';
   var BRIDGE_PORT = 18788;
   var STATE_KEY = 'extella:claude-connection:v1';
@@ -309,9 +309,15 @@ ETB.claudeInstaller = (function () {
     "",
     "    # H17: every return path is a JSON string, never a dict. The page unwraps",
     "    # two envelopes and a Python repr would reach it as unparsable text.",
+    "    # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить",
+    "    # «исправление не помогло» от «отвечает старая версия», и мы потеряли на",
+    "    # этом два круга переписки с пользователем.",
+    "    SETUP_VERSION = \"3.2.6\"",
+    "",
     "    def result(status, code, message, **extra):",
     "        payload = {\"status\": status, \"code\": code, \"message\": message,",
-    "                   \"step\": action, \"model_called\": False,",
+    "                   \"step\": action, \"setup_version\": SETUP_VERSION,",
+    "                   \"model_called\": False,",
     "                   \"agent_called\": False, \"paid\": False}",
     "        payload.update(extra)",
     "        return json.dumps(payload, ensure_ascii=False)",
