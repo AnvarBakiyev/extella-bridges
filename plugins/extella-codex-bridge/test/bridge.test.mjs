@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { scrubCredentialEnvironment } from "../scripts/bridge-entry.mjs";
@@ -562,8 +563,14 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     const expected = createHash("sha256").update(code).digest("hex");
     const match = source.match(new RegExp(`var ${hashName} = '([a-f0-9]{64})'`));
     assert.equal(match?.[1], expected, hashName);
+    const syntax = spawnSync(
+      "python3",
+      ["-c", "import sys; compile(sys.stdin.read(), '<embedded-expert>', 'exec')"],
+      { input: code, encoding: "utf8" },
+    );
+    assert.equal(syntax.status, 0, `${codeName}: ${syntax.stderr}`);
   }
-  assert.match(source, /var PLUGIN_VERSION = '0\.3\.5'/);
+  assert.match(source, /var PLUGIN_VERSION = '0\.3\.6'/);
   assert.match(source, /"\.extella", "api_token\.txt"/);
   assert.match(source, /installed, plugin_path = installed_plugin\(\)/);
   assert.match(source, /plugin_version_mismatch/);
@@ -581,6 +588,144 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
   assert.doesNotMatch(source, /QWEN_SETUP_SCOPE/);
   assert.doesNotMatch(source, /agent_extella_alibaba_default/);
   assert.doesNotMatch(source, /0\.2\.1/);
+});
+
+test("Codex setup discovers version-manager CLIs and preserves their runtime PATH", async () => {
+  const source = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+
+  assert.match(source, /"\.nvm", "versions", "node"/);
+  assert.match(source, /"\.fnm", "node-versions"/);
+  assert.match(source, /"n", "versions", "node"/);
+  assert.match(source, /"\.volta", "tools", "image", "node"/);
+  assert.match(source, /for flags in \("-ilc", "-lc"\)/);
+  assert.match(source, /env\["PATH"\] = ":"\.join\(candidate_roots\(\)/);
+
+  for (const codeName of [
+    "HEALTH_EXPERT_CODE",
+    "INSTALL_EXPERT_CODE",
+    "BRIDGE_EXPERT_CODE",
+  ]) {
+    const assignmentStart = source.indexOf(`var ${codeName} = [`);
+    const joinStart = source.indexOf("].join(", assignmentStart);
+    const semicolon = source.indexOf(";", joinStart);
+    const arrayStart = source.indexOf("[", assignmentStart);
+    const code = Function(`return ${source.slice(arrayStart, semicolon)}`)();
+    assert.match(code, /\.nvm/);
+    assert.match(code, /-ilc/);
+    assert.match(code, /env\["PATH"\] = ":"\.join\(roots/);
+  }
+});
+
+test("OS setup starts an nvm-installed Codex through its adjacent Node runtime", async (t) => {
+  const source = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  const assignmentStart = source.indexOf("var EXPERT_CODE = [");
+  const joinStart = source.indexOf("].join(", assignmentStart);
+  const semicolon = source.indexOf(";", joinStart);
+  const arrayStart = source.indexOf("[", assignmentStart);
+  const code = Function(`return ${source.slice(arrayStart, semicolon)}`)();
+  const home = await mkdtemp(join(tmpdir(), "extella-codex-nvm-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const bin = join(home, ".nvm", "versions", "node", "v24.16.0", "bin");
+  await mkdir(bin, { recursive: true });
+
+  const executables = {
+    "extella-test-node": '#!/bin/sh\nexec /bin/sh "$@"\n',
+    node: "#!/bin/sh\nexit 0\n",
+    codex: [
+      "#!/usr/bin/env extella-test-node",
+      'if [ "$1" = "--version" ]; then echo "codex-cli test"; exit 0; fi',
+      'if [ "$1" = "login" ] && [ "$2" = "status" ]; then echo "Logged in using ChatGPT" >&2; exit 0; fi',
+      "exit 1",
+      "",
+    ].join("\n"),
+    git: "#!/bin/sh\nexit 0\n",
+    launchctl: "#!/bin/sh\nexit 0\n",
+  };
+  for (const [name, body] of Object.entries(executables)) {
+    const path = join(bin, name);
+    await writeFile(path, body, "utf8");
+    await chmod(path, 0o755);
+  }
+
+  const python = spawnSync(
+    "python3",
+    ["-"],
+    {
+      input: [
+        "import json, os, platform",
+        'platform.system = lambda: "Darwin"',
+        code,
+        "_real_isfile = os.path.isfile",
+        'os.path.isfile = lambda path: _real_isfile(path) if str(path).startswith(os.environ["HOME"]) else False',
+        'print(_etb_codex_setup_v2("preflight"))',
+        "",
+      ].join("\n"),
+      encoding: "utf8",
+      env: { HOME: home, PATH: "/usr/bin:/bin", SHELL: "/bin/sh" },
+    },
+  );
+  assert.equal(python.status, 0, python.stderr);
+  const result = JSON.parse(python.stdout.trim());
+  assert.equal(result.status, "success", JSON.stringify(result));
+  assert.equal(result.code, "preflight_ok");
+  assert.equal(result.codex_version, "codex-cli test");
+});
+
+test("Codex credentials use the four canonical token sources without importing an agent id", async () => {
+  const source = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  const assignmentStart = source.indexOf("var CREDENTIALS_EXPERT_CODE = [");
+  const joinStart = source.indexOf("].join(", assignmentStart);
+  const semicolon = source.indexOf(";", joinStart);
+  const arrayStart = source.indexOf("[", assignmentStart);
+  const code = Function(`return ${source.slice(arrayStart, semicolon)}`)();
+
+  const environment = code.indexOf('os.environ.get("EXTELLA_API_TOKEN"');
+  const file = code.indexOf('".extella", "api_token.txt"');
+  const launchctl = code.indexOf('"/bin/launchctl", "getenv", "EXTELLA_API_TOKEN"');
+  const wizard = code.indexOf('"extella_wizard", "app", "config.json"');
+  assert.ok(environment >= 0 && environment < file);
+  assert.ok(file < launchctl && launchctl < wizard);
+  assert.equal(code.slice(wizard).includes("agent_id"), false);
+  assert.match(code, /launchctl", "setenv", "EXTELLA_API_TOKEN", token/);
+});
+
+test("Codex preflight distinguishes signed-out state from a broken status check", async () => {
+  const source = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  assert.match(source, /"not logged in" in reported/);
+  assert.match(source, /"codex_auth_required"/);
+  assert.match(source, /"codex_login_check_failed"/);
+  assert.doesNotMatch(source, /\[codex, "login"\]/);
+});
+
+test("OS install reports the failing plugin operation without exposing command output", async () => {
+  const source = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  for (const code of [
+    "marketplace_list_failed",
+    "marketplace_list_invalid",
+    "marketplace_remove_failed",
+    "marketplace_add_failed",
+    "plugin_install_failed",
+    "plugin_verification_failed",
+    "plugin_version_mismatch",
+  ]) {
+    assert.match(source, new RegExp(`"${code}"`));
+  }
+  assert.doesNotMatch(source, /result\([^\n]+stderr/);
 });
 
 test("all deployment scripts resolve storage scope from the current account", async () => {
