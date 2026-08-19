@@ -220,3 +220,30 @@ test("the rule states the limits and the manual way around them", async () => {
   assert.ok(rule.includes("опционален"));
   assert.equal(UUID.test(rule), false);
 });
+
+test("the token is read from every canonical source, and agent_id from none of them", async () => {
+  const source = await readFile(
+    join(CLAUDE_PLUGIN, "experts", "extella_claude_product_setup.py"), "utf8");
+  // Comments have fooled four assertions in this suite already — match code only.
+  const code = source.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  // Measured 18.08.2026 on a tester's machine: environment, api_token.txt and
+  // launchctl were all empty while the expert itself executed — the listener's
+  // own config was the only token on the machine, and we did not read it.
+  const order = [
+    'os.environ.get("EXTELLA_API_TOKEN"',
+    'api_token.txt',
+    '"getenv", "EXTELLA_API_TOKEN"',
+    'extella_wizard", "app", "config.json',
+  ].map((needle) => code.indexOf(needle));
+  for (const [i, at] of order.entries()) {
+    assert.ok(at !== -1, `token source ${i} is missing`);
+    if (i > 0) assert.ok(at > order[i - 1], `source ${i} out of canonical order`);
+  }
+  // DEPLOY_REQUIREMENTS п.4: the wizard config may name a different agent.
+  const wizardBlock = code.slice(code.indexOf('extella_wizard'), code.indexOf('def token_sources_report'));
+  assert.equal(wizardBlock.includes("agent_id"), false, "agent_id must not come from the wizard config");
+  // The refusal reports source presence, never values.
+  assert.ok(code.includes("token_sources_report"));
+  const report = code.slice(code.indexOf("def token_sources_report"), code.indexOf("def validate_token"));
+  assert.equal(/append\([^)]*value/.test(report), false, "the report must not carry token values");
+});

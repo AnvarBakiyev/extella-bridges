@@ -340,7 +340,39 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
             except Exception:
                 pass
         probe = run(["/bin/launchctl", "getenv", "EXTELLA_API_TOKEN"], timeout=20)
-        return (probe.stdout or "").strip() if probe and probe.returncode == 0 else ""
+        value = (probe.stdout or "").strip() if probe and probe.returncode == 0 else ""
+        if len(value) >= 8:
+            return value
+        # Четвёртый канонный источник (store_app/update.py, PROMPT_UPDATE_AGENT):
+        # собственный конфиг листенера. Если эксперт исполняется — листенер
+        # авторизован, значит этот файл на машине есть. Замер 18.08.2026: на
+        # машине тестера пусты окружение, файл и launchctl, при этом эксперт
+        # работает — то есть токен лежал ровно здесь, а мы сюда не смотрели.
+        # Из конфига берётся ТОЛЬКО токен: agent_id оттуда брать нельзя
+        # (DEPLOY_REQUIREMENTS п.4 — там может стоять другой агент).
+        try:
+            with open(os.path.join(HOME, "extella_wizard", "app", "config.json"),
+                      "r", encoding="utf-8") as stream:
+                wizard = json.loads(stream.read(65536))
+            for field in ("auth_token", "token", "AUTH_TOKEN", "extella_token"):
+                candidate = str(wizard.get(field) or "").strip()
+                if len(candidate) >= 8:
+                    return candidate
+        except Exception:
+            pass
+        return ""
+
+    def token_sources_report():
+        """Какие источники существуют, БЕЗ значений — только присутствие.
+        Нужен отказу: пять кругов отладки ушло на то, чтобы узнать, чего
+        именно на машине нет."""
+        report = []
+        report.append("окружение: " + ("есть" if len(os.environ.get("EXTELLA_API_TOKEN", "").strip()) >= 8 else "пусто"))
+        report.append("файл api_token.txt: " + ("есть" if os.path.isfile(os.path.join(HOME, ".extella", "api_token.txt")) else "нет"))
+        probe = run(["/bin/launchctl", "getenv", "EXTELLA_API_TOKEN"], timeout=20)
+        report.append("launchctl: " + ("есть" if probe and probe.returncode == 0 and len((probe.stdout or "").strip()) >= 8 else "пусто"))
+        report.append("конфиг листенера: " + ("есть" if os.path.isfile(os.path.join(HOME, "extella_wizard", "app", "config.json")) else "нет"))
+        return "; ".join(report)
 
     # The only proof of account binding. `claude mcp list` reports Connected
     # for a server with no token at all, because its health check is an MCP
@@ -642,10 +674,11 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     # руками. Правильный следующий шаг — открыть Extella на этой машине, а не
     # создавать файл с секретом в редакторе.
     NO_TOKEN_MESSAGE = (
-        "Токен Extella на этой машине не найден. Откройте приложение Extella "
-        "на этом компьютере один раз и войдите в свой аккаунт — токен появится "
-        "сам, — затем нажмите «Подключить Claude» снова. Создавать файл вручную "
-        "не нужно."
+        "Токен Extella на этой машине не найден. Проверено — " +
+        token_sources_report() +
+        ". Откройте приложение Extella, войдите в аккаунт и повторите. "
+        "Создавать файл вручную не нужно. Если не поможет — пришлите этот "
+        "текст целиком."
     )
 
     ACCOUNT_TOKEN = token_from_disk()
