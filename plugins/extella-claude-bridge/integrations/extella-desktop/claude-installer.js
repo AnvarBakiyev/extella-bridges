@@ -11,7 +11,7 @@
 
 ETB.claudeInstaller = (function () {
   var EXPERT_NAME = 'extella_claude_product_setup';
-  var EXPERT_SHA256 = '9848eeb0e754ab66eb1d8ff41802cb0a8c82b73aed724c213d65fe9263cde97d';
+  var EXPERT_SHA256 = '6248a20c8b7e0c1958fd59e06f74b9a74bf186b5aec3a75e3e88ae8b505ec90d';
   var PLUGIN_VERSION = '0.1.0-poc';
   var BRIDGE_PORT = 18788;
   var STATE_KEY = 'extella:claude-connection:v1';
@@ -312,7 +312,7 @@ ETB.claudeInstaller = (function () {
     "    # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить",
     "    # «исправление не помогло» от «отвечает старая версия», и мы потеряли на",
     "    # этом два круга переписки с пользователем.",
-    "    SETUP_VERSION = \"3.2.9\"",
+    "    SETUP_VERSION = \"3.2.14\"",
     "",
     "    def result(status, code, message, **extra):",
     "        payload = {\"status\": status, \"code\": code, \"message\": message,",
@@ -752,9 +752,11 @@ ETB.claudeInstaller = (function () {
     "            # этом run отвечает \"Expert not found\". Поэтому копия проверяется",
     "            # запуском с пустым prompt — он безмодельный и отсекается уже внутри",
     "            # моста, так что любой ответ моста доказывает, что Expert исполнился.",
+    "            # Поле timeout здесь запрещено: с 18.08.2026 core отвечает на него",
+    "            # 422 extra_forbidden, и проверка запуском падала у всех агентов.",
     "            probe = core(\"/api/expert/run\",",
     "                         {\"name\": BRIDGE_EXPERT, \"global\": False,",
-    "                          \"params\": {\"prompt\": \"\"}, \"timeout\": 60}, agent_id)",
+    "                          \"params\": {\"prompt\": \"\"}}, agent_id)",
     "            answer = json.dumps(probe, ensure_ascii=False) if probe else \"\"",
     "            if \"invalid_prompt\" in answer or \"bridge_not_configured\" in answer:",
     "                runnable.append(agent_id)",
@@ -1274,10 +1276,14 @@ ETB.claudeInstaller = (function () {
 
   function _runStep(targetScope, step, marketplacePath) {
     var long = LONG_STEPS[step] === true;
+    // Поле timeout в теле /api/expert/run запрещено с 18.08.2026: платформа
+    // отвечает 422 extra_forbidden (замерено; wait при этом принимается).
+    // Серверного тайм-аута больше нет, дедлайн остаётся только клиентским —
+    // он ниже, транспортным timeoutMs.
     return ETB.api.runExpertScoped(
       EXPERT_NAME,
       { action: step, marketplace_path: marketplacePath || '' },
-      { global: false, wait: true, timeout: long ? 360 : 120 },
+      { global: false, wait: true },
       targetScope,
       { timeoutMs: long ? 420000 : 150000 }
     ).then(_parseRunResult).catch(function (error) {
