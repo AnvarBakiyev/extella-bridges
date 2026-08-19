@@ -6,7 +6,7 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = '600887557bfec8b4becd1eb8f9f024920cae5b0e5ed520a97c8e883976cff074';
+  var EXPERT_SHA256 = '243cdffb9dca32b23c4cacb32fdf891272bb896d1c2329fb4668e526d22a4794';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '138d0f2128070885cbe2a7379e6c1bc82f75511c0bea516f3783feac9e26027b';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
@@ -59,6 +59,7 @@ ETB.codexInstaller = (function () {
     '    import json, os, platform, secrets, shutil, subprocess, urllib.request',
     '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-codex-bridge.git"',
     '    BUILDER_REF = "v0.3.6"',
+    '    SETUP_VERSION = "3.2.14"',
     '    # Independent agent-building standards contract; do not advance with bridge-only releases.',
     '    STANDARDS_REF = "v0.3.0"',
     '    MARKETPLACE = "extella-codex"',
@@ -66,7 +67,7 @@ ETB.codexInstaller = (function () {
     '',
     '    def result(status, code, message, **extra):',
     '        payload = {"status": status, "code": code, "message": message,',
-    '                   "step": step, "model_called": False,',
+    '                   "step": step, "setup_version": SETUP_VERSION, "model_called": False,',
     '                   "agent_called": False, "paid": False}',
     '        payload.update(extra)',
     '        return json.dumps(payload, ensure_ascii=False)',
@@ -1164,7 +1165,7 @@ ETB.codexInstaller = (function () {
       return ETB.api.runExpertScoped(
         expertName,
         { action: step },
-        { global: false, wait: true, timeout: longStep ? 360 : 120 },
+        { global: false, wait: true },
         targetScope,
         { timeoutMs: longStep ? 420000 : 150000 }
       ).then(_parseRunResult).catch(function (error) {
@@ -1180,7 +1181,6 @@ ETB.codexInstaller = (function () {
       { step: step },
       {
         global: false,
-        timeout: longStep ? 360 : 120,
         maxWait: longStep ? 420000 : 180000,
         interval: 1500,
         stallTimeout: 0
