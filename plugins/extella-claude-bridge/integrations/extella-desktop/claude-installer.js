@@ -11,7 +11,7 @@
 
 ETB.claudeInstaller = (function () {
   var EXPERT_NAME = 'extella_claude_product_setup';
-  var EXPERT_SHA256 = '0d54c66512e2ad0b02c10b3732913ae7eaeb5ae7eb2d4ca2f4c8a482aef4f691';
+  var EXPERT_SHA256 = '59698a2c7c0cfc2fc03d6a373500a99d4594d713ab979a66a6cec435ef3f45b8';
   var PLUGIN_VERSION = '0.1.0-poc';
   var BRIDGE_PORT = 18788;
   var STATE_KEY = 'extella:claude-connection:v1';
@@ -312,7 +312,7 @@ ETB.claudeInstaller = (function () {
     "    # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить",
     "    # «исправление не помогло» от «отвечает старая версия», и мы потеряли на",
     "    # этом два круга переписки с пользователем.",
-    "    SETUP_VERSION = \"3.2.8\"",
+    "    SETUP_VERSION = \"3.2.9\"",
     "",
     "    def result(status, code, message, **extra):",
     "        payload = {\"status\": status, \"code\": code, \"message\": message,",
@@ -727,6 +727,17 @@ ETB.claudeInstaller = (function () {
     "        digest = hashlib.sha256((\"extella-mcp-account-v1.\" + value).encode(\"utf-8\")).hexdigest()",
     "        return \"acct_\" + digest[:12]",
     "",
+    "    # Отказ обязан называть действие. «Текущий аккаунт Extella недоступен» —",
+    "    # это констатация без следующего шага: человек не знает ни что токен нужен",
+    "    # создать самому, ни куда его положить. Тот же класс дефекта, что и",
+    "    # «не удалось проверить вход» вместо «войдите».",
+    "    NO_TOKEN_MESSAGE = (",
+    "        \"Токен Extella не найден. Создайте личный токен в интерфейсе Extella \"",
+    "        \"и сохраните его в файл \" + os.path.join(HOME, \".extella\", \"api_token.txt\") +",
+    "        \" одной строкой, затем повторите. Токен выдаёт себе владелец аккаунта: \"",
+    "        \"установщик его не создаёт и не запрашивает.\"",
+    "    )",
+    "",
     "    ACCOUNT_TOKEN = token_from_disk()",
     "    claude = find(\"claude\")",
     "    if platform.system() != \"Darwin\":",
@@ -836,11 +847,13 @@ ETB.claudeInstaller = (function () {
     "    if action == \"credentials\":",
     "        token = token_from_disk()",
     "        if len(token) < 8:",
-    "            return result(\"error\", \"extella_token_unavailable\", \"Текущий аккаунт Extella недоступен.\")",
+    "            return result(\"error\", \"extella_token_unavailable\", NO_TOKEN_MESSAGE)",
     "        agent_id = validate_token(token)",
     "        if not agent_id:",
     "            token = \"\"",
-    "            return result(\"error\", \"extella_token_invalid\", \"Токен текущего аккаунта Extella не подтверждён.\")",
+    "            return result(\"error\", \"extella_token_invalid\",",
+    "                          \"Токен Extella не подтверждён сервером. Проверьте, что он \"",
+    "                          \"скопирован целиком и не отозван, затем повторите.\")",
     "        handle = handle_for(token)",
     "        try:",
     "            os.makedirs(MCP_DIR, mode=0o700, exist_ok=True)",
@@ -880,8 +893,7 @@ ETB.claudeInstaller = (function () {
     "        # «выбери агентов» требует понимания скоупов, которого у него нет.",
     "        # Раздача и обновление — один шаг, каждая копия сверяется посимвольно.",
     "        if len(ACCOUNT_TOKEN) < 8:",
-    "            return result(\"error\", \"extella_token_unavailable\",",
-    "                          \"Текущий аккаунт Extella недоступен.\")",
+    "            return result(\"error\", \"extella_token_unavailable\", NO_TOKEN_MESSAGE)",
     "        # Порция по умолчанию подобрана по замеру: один агент — четыре вызова",
     "        # ядра, восемь укладываются в обычный ответ с запасом.",
     "        report, problem = provision_scopes(BRIDGE_CODE, int(offset or 0),",
@@ -922,8 +934,7 @@ ETB.claudeInstaller = (function () {
     "        if not os.path.isfile(script):",
     "            token = token_from_disk()",
     "            if len(token) < 8:",
-    "                return result(\"error\", \"extella_token_unavailable\",",
-    "                              \"Текущий аккаунт Extella недоступен: рантайм не скачать.\")",
+    "                return result(\"error\", \"extella_token_unavailable\", NO_TOKEN_MESSAGE)",
     "            problem = fetch_and_unpack_runtime(token, runtime_dir)",
     "            token = \"\"",
     "            if problem:",
