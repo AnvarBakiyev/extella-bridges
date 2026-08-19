@@ -122,7 +122,7 @@ ETB.marketplace = (function () {
           kwargs: {},
           cspl: 'fython'
         }).then(function () {
-          var opts = { timeout: 20 };
+          var opts = {};
           if (deviceId) opts.target = deviceId;
           // Чистка обязана закрепиться: один тихо упавший облачный ран оставлял
           // файл карточки живым, и синк воскрешал её («удаляется и снова
@@ -133,7 +133,7 @@ ETB.marketplace = (function () {
               if (r && r.status === 'error') throw new Error(r.message || 'cleanup error');
               return r;
             }).catch(function (e) {
-              if (deviceId) return ETB.api.runExpert(fnName, {}, { timeout: 20 }).then(function (r2) {
+              if (deviceId) return ETB.api.runExpert(fnName, {}, {}).then(function (r2) {
                 if (r2 && r2.status === 'error') throw new Error(r2.message || 'cleanup error');
                 return r2;
               });

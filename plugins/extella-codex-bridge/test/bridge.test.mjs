@@ -571,6 +571,8 @@ test("Extella Desktop installer pins hashes for every embedded Expert", async ()
     assert.equal(syntax.status, 0, `${codeName}: ${syntax.stderr}`);
   }
   assert.match(source, /var PLUGIN_VERSION = '0\.3\.6'/);
+  assert.match(source, /SETUP_VERSION = "3\.2\.14"/);
+  assert.match(source, /"setup_version": SETUP_VERSION/);
   assert.match(source, /"\.extella", "api_token\.txt"/);
   assert.match(source, /installed, plugin_path = installed_plugin\(\)/);
   assert.match(source, /plugin_version_mismatch/);
@@ -726,6 +728,22 @@ test("OS install reports the failing plugin operation without exposing command o
     assert.match(source, new RegExp(`"${code}"`));
   }
   assert.doesNotMatch(source, /result\([^\n]+stderr/);
+});
+
+test("Codex Expert API calls omit the rejected timeout body field", async () => {
+  const installer = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "codex-installer.js"),
+    "utf8",
+  );
+  const marketplace = await readFile(
+    join(ROOT, "integrations", "extella-desktop", "marketplace.js"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(installer, /\{ global: false, wait: true, timeout:/);
+  assert.doesNotMatch(installer, /^\s*timeout: longStep/m);
+  assert.match(installer, /\{ timeoutMs: longStep \? 420000 : 150000 \}/);
+  assert.doesNotMatch(marketplace, /\{ timeout: 20 \}/);
 });
 
 test("all deployment scripts resolve storage scope from the current account", async () => {
