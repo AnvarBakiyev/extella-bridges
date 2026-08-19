@@ -208,7 +208,7 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
     # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить
     # «исправление не помогло» от «отвечает старая версия», и мы потеряли на
     # этом два круга переписки с пользователем.
-    SETUP_VERSION = "3.2.17"
+    SETUP_VERSION = "3.2.18"
 
     def result(status, code, message, **extra):
         payload = {"status": status, "code": code, "message": message,
