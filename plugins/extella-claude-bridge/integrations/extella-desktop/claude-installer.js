@@ -11,7 +11,7 @@
 
 ETB.claudeInstaller = (function () {
   var EXPERT_NAME = 'extella_claude_product_setup';
-  var EXPERT_SHA256 = 'eaf0e046f457e0e8c296fd6d4b47702c0753639dbdb44d31f8aaf060d4da5f5b';
+  var EXPERT_SHA256 = '429c77b54b80d8dd8bb609fe0b1f8765ee8b5674ae60351728436a53801fa12c';
   var PLUGIN_VERSION = '0.1.0-poc';
   var BRIDGE_PORT = 18788;
   var STATE_KEY = 'extella:claude-connection:v1';
@@ -312,7 +312,7 @@ ETB.claudeInstaller = (function () {
     "    # Версия установщика едет в КАЖДОМ ответе. Без неё нельзя отличить",
     "    # «исправление не помогло» от «отвечает старая версия», и мы потеряли на",
     "    # этом два круга переписки с пользователем.",
-    "    SETUP_VERSION = \"3.2.22\"",
+    "    SETUP_VERSION = \"3.2.23\"",
     "",
     "    def result(status, code, message, **extra):",
     "        payload = {\"status\": status, \"code\": code, \"message\": message,",
