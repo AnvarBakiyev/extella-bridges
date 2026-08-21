@@ -15,7 +15,8 @@ const MANIFEST = resolve(REPO_ROOT, ".claude-plugin", "marketplace.json");
 const PLUGIN_NAME = "extella-claude-bridge";
 const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const OWNER = "AnvarBakiyev";
-const REPO = "extella-codex-bridge";
+const REPO = "extella-bridges";
+const CLONE_URL = `https://github.com/${OWNER}/${REPO}.git`;
 
 function parseArgs(argv) {
   const options = {};
@@ -45,10 +46,12 @@ function pinnedSource(tag) {
         "a branch name is a floating source",
     );
   }
-  // `repo` carries owner and name together. A separate `owner` field validates
-  // and even installs from a warm cache, then fails a clean-room install with
-  // "Invalid GitHub repository format" — the shape has to be owner/repo.
-  return { source: "github", repo: `${OWNER}/${REPO}`, ref: tag };
+  // The `url` form, not `github`. Measured 21.08.2026 on a machine without an
+  // SSH key: the `github` form makes `plugin install` clone over
+  // git@github.com and fail with "Permission denied (publickey)" — even when
+  // the repository is public. The `url` form clones over HTTPS and still
+  // honours the tag: the cache checked out v0.3.6 exactly.
+  return { source: "url", url: CLONE_URL, ref: tag };
 }
 
 // A string entry is the local path; an object entry must carry a tag. Anything
@@ -61,12 +64,16 @@ function describeSource(entry) {
   }
   if (
     entry &&
-    entry.source === "github" &&
-    /^[\w.-]+\/[\w.-]+$/.test(entry.repo || "") &&
-    !entry.owner &&
+    entry.source === "url" &&
+    entry.url === CLONE_URL &&
     RELEASE_TAG.test(entry.ref || "")
   ) {
-    return { kind: "github", pinned: true, detail: entry.ref };
+    return { kind: "url", pinned: true, detail: entry.ref };
+  }
+  // The old `github` form is refused on purpose: it pins correctly but installs
+  // only for people with an SSH key, which is most of an install failure.
+  if (entry && entry.source === "github") {
+    return { kind: "invalid", pinned: false, detail: "github form clones over SSH" };
   }
   return { kind: "invalid", pinned: false, detail: JSON.stringify(entry) };
 }

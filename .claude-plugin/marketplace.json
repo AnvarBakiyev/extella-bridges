@@ -12,12 +12,12 @@
     {
       "name": "extella-claude-bridge",
       "source": {
-        "source": "github",
-        "repo": "AnvarBakiyev/extella-bridges",
-        "ref": "v0.4.2"
+        "source": "url",
+        "url": "https://github.com/AnvarBakiyev/extella-bridges.git",
+        "ref": "v0.4.3"
       },
       "description": "Connect Claude Code to Extella MCP, one connection per Extella account, and expose the signed local Extella bridge contract.",
-      "version": "0.1.0-poc",
+      "version": "0.4.3",
       "keywords": [
         "extella",
         "mcp",
