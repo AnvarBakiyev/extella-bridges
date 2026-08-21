@@ -512,7 +512,7 @@ test("plugin manifest, package, installer, and documented tag share one version"
     /BUILDER_REF = "v([^"]+)"/,
   )?.[1];
   const documentedVersion = readme.match(
-    /extella-codex-bridge --ref v([^\s]+)/,
+    /extella-bridges --ref v([^\s]+)/,
   )?.[1];
 
   assert.equal(pluginVersion, packageVersion);

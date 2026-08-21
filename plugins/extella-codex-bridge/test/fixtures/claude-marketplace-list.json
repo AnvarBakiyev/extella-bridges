@@ -8,7 +8,7 @@
   {
     "name": "extella-claude",
     "source": "github",
-    "repo": "AnvarBakiyev/extella-codex-bridge",
+    "repo": "AnvarBakiyev/extella-bridges",
     "installLocation": "/Users/example/.claude/plugins/cache/extella-claude"
   }
 ]

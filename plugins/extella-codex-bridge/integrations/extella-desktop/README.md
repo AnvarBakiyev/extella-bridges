@@ -11,7 +11,7 @@ The host application must provide the API surface consumed by these modules and 
 After a release, update the desktop install constants to:
 
 ```text
-marketplace: AnvarBakiyev/extella-codex-bridge
+marketplace: AnvarBakiyev/extella-bridges
 plugin: extella-codex-bridge@extella-codex
 ```
 

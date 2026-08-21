@@ -6,11 +6,11 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = '243cdffb9dca32b23c4cacb32fdf891272bb896d1c2329fb4668e526d22a4794';
+  var EXPERT_SHA256 = 'cce2994aa8106bbfc27e8797b28d44e941b13b6e2d43455bcfbbae7e1562ec07';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '138d0f2128070885cbe2a7379e6c1bc82f75511c0bea516f3783feac9e26027b';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
-  var INSTALL_EXPERT_SHA256 = 'b895781266512f9e52d3e460eb31d290d04679a6952bd825a8af5169fa853654';
+  var INSTALL_EXPERT_SHA256 = '6e68c75d50c81cf6a01192cd4e9eaeb3da8e0cc6baab913600f8b210f9569969';
   var CREDENTIALS_EXPERT_NAME = 'extella_codex_credentials_v1';
   var CREDENTIALS_EXPERT_SHA256 = '22662647289c92b4ac0712e83b6efc07c555b8fcc10ff4cd40f402f83304fb0d';
   var BRIDGE_EXPERT_NAME = 'extella_codex_bridge_setup_v1';
@@ -57,7 +57,7 @@ ETB.codexInstaller = (function () {
   var EXPERT_CODE = [
     'def _etb_codex_setup_v2(step="preflight") -> str:',
     '    import json, os, platform, secrets, shutil, subprocess, urllib.request',
-    '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-codex-bridge.git"',
+    '    BUILDER_REPO = "https://github.com/AnvarBakiyev/extella-bridges.git"',
     '    BUILDER_REF = "v0.3.6"',
     '    SETUP_VERSION = "3.2.14"',
     '    # Independent agent-building standards contract; do not advance with bridge-only releases.',
@@ -295,7 +295,7 @@ ETB.codexInstaller = (function () {
     '                    "Codex не смог обновить прежний источник Extella.")',
     '        try:',
     '            run([codex, "plugin", "marketplace", "add",',
-    '                "AnvarBakiyev/extella-codex-bridge", "--ref", BUILDER_REF,',
+    '                "AnvarBakiyev/extella-bridges", "--ref", BUILDER_REF,',
     '                "--json"], timeout=180)',
     '        except Exception:',
     '            return result("error", "marketplace_add_failed",',
@@ -537,7 +537,7 @@ ETB.codexInstaller = (function () {
     '        removed = subprocess.run([codex, "plugin", "marketplace", "remove", "extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=90, env=env, shell=False)',
     '        if removed.returncode != 0:',
     '            return json.dumps({"status": "error", "code": "marketplace_remove_failed", "message": "Codex could not refresh the Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
-    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-codex-bridge", "--ref", "v0.3.6", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
+    '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-bridges", "--ref", "v0.3.6", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if added.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
     '    installed = subprocess.run([codex, "plugin", "add", "extella-codex-bridge@extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
