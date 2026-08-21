@@ -14,10 +14,10 @@
       "source": {
         "source": "url",
         "url": "https://github.com/AnvarBakiyev/extella-bridges.git",
-        "ref": "v0.4.3"
+        "ref": "v0.4.4"
       },
       "description": "Connect Claude Code to Extella MCP, one connection per Extella account, and expose the signed local Extella bridge contract.",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "keywords": [
         "extella",
         "mcp",

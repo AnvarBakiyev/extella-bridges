@@ -775,7 +775,21 @@ def extella_claude_product_setup(action: str = "preflight", marketplace_path: st
                 run([claude, "plugin", "marketplace", "remove", MARKETPLACE], timeout=90)
         added = run([claude, "plugin", "marketplace", "add", source, "--scope", "user"], timeout=180)
         if not added or added.returncode != 0:
-            return result("error", "marketplace_add_failed", "Claude Code не смог добавить проверенный источник Extella.")
+            # Отказ обязан назвать причину, а не только факт. Прежний текст не
+            # говорил ничего, и разбор у тестировщика шёл вслепую (замер
+            # 21.08.2026). Закрытый репозиторий выглядит именно так.
+            reason = ((added.stderr or "") + (added.stdout or "")).lower() if added else ""
+            denied = ("permission denied" in reason or "repository not found" in reason
+                      or "could not read username" in reason or "authentication failed" in reason)
+            if denied:
+                return result("error", "marketplace_no_access",
+                              "GitHub не отдал репозиторий моста. Раздача публичная, "
+                              "доступ для неё не нужен — скорее всего сохранился прежний "
+                              "закрытый источник. Удалите источник extella-claude и "
+                              "нажмите кнопку ещё раз.")
+            return result("error", "marketplace_add_failed",
+                          "Claude Code не смог добавить проверенный источник Extella: " +
+                          (((added.stderr or "").strip()[-160:]) if added else "нет ответа"))
         installed = run([claude, "plugin", "install", PLUGIN, "--scope", "user"], timeout=180)
         if not installed or installed.returncode != 0:
             return result("error", "plugin_install_failed", "Claude Code не смог установить плагин Extella.")

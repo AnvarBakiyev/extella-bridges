@@ -11,7 +11,7 @@
 
 ETB.claudeInstaller = (function () {
   var EXPERT_NAME = 'extella_claude_product_setup';
-  var EXPERT_SHA256 = '774c78dc8f21e6197c2c2cd8e574e825ba2c9083e3d7d9ee0f0b6e2cda1baa11';
+  var EXPERT_SHA256 = '2faa031ee168355c9436d45f494953d7c05d09e0ed584c06e53856b903bfaa45';
   var PLUGIN_VERSION = '0.1.0-poc';
   var BRIDGE_PORT = 18788;
   var STATE_KEY = 'extella:claude-connection:v1';
@@ -879,7 +879,21 @@ ETB.claudeInstaller = (function () {
     "                run([claude, \"plugin\", \"marketplace\", \"remove\", MARKETPLACE], timeout=90)",
     "        added = run([claude, \"plugin\", \"marketplace\", \"add\", source, \"--scope\", \"user\"], timeout=180)",
     "        if not added or added.returncode != 0:",
-    "            return result(\"error\", \"marketplace_add_failed\", \"Claude Code не смог добавить проверенный источник Extella.\")",
+    "            # Отказ обязан назвать причину, а не только факт. Прежний текст не",
+    "            # говорил ничего, и разбор у тестировщика шёл вслепую (замер",
+    "            # 21.08.2026). Закрытый репозиторий выглядит именно так.",
+    "            reason = ((added.stderr or \"\") + (added.stdout or \"\")).lower() if added else \"\"",
+    "            denied = (\"permission denied\" in reason or \"repository not found\" in reason",
+    "                      or \"could not read username\" in reason or \"authentication failed\" in reason)",
+    "            if denied:",
+    "                return result(\"error\", \"marketplace_no_access\",",
+    "                              \"GitHub не отдал репозиторий моста. Раздача публичная, \"",
+    "                              \"доступ для неё не нужен — скорее всего сохранился прежний \"",
+    "                              \"закрытый источник. Удалите источник extella-claude и \"",
+    "                              \"нажмите кнопку ещё раз.\")",
+    "            return result(\"error\", \"marketplace_add_failed\",",
+    "                          \"Claude Code не смог добавить проверенный источник Extella: \" +",
+    "                          (((added.stderr or \"\").strip()[-160:]) if added else \"нет ответа\"))",
     "        installed = run([claude, \"plugin\", \"install\", PLUGIN, \"--scope\", \"user\"], timeout=180)",
     "        if not installed or installed.returncode != 0:",
     "            return result(\"error\", \"plugin_install_failed\", \"Claude Code не смог установить плагин Extella.\")",

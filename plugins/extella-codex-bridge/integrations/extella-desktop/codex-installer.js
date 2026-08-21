@@ -6,11 +6,11 @@
 
 ETB.codexInstaller = (function () {
   var EXPERT_NAME = '_etb_codex_setup_v2';
-  var EXPERT_SHA256 = 'cce2994aa8106bbfc27e8797b28d44e941b13b6e2d43455bcfbbae7e1562ec07';
+  var EXPERT_SHA256 = 'b36165c3c5ddc8ab7d5a30d68b7f60db47c77f5d5f654e5ebd35745a332be409';
   var HEALTH_EXPERT_NAME = '_etb_codex_host_health_v1';
   var HEALTH_EXPERT_SHA256 = '138d0f2128070885cbe2a7379e6c1bc82f75511c0bea516f3783feac9e26027b';
   var INSTALL_EXPERT_NAME = 'extella_codex_plugin_install_v1';
-  var INSTALL_EXPERT_SHA256 = '6e68c75d50c81cf6a01192cd4e9eaeb3da8e0cc6baab913600f8b210f9569969';
+  var INSTALL_EXPERT_SHA256 = 'fc1439222c50a2aa018980ff92b37ba9817e8a555d98244d61acfd3a69e0f1a6';
   var CREDENTIALS_EXPERT_NAME = 'extella_codex_credentials_v1';
   var CREDENTIALS_EXPERT_SHA256 = '22662647289c92b4ac0712e83b6efc07c555b8fcc10ff4cd40f402f83304fb0d';
   var BRIDGE_EXPERT_NAME = 'extella_codex_bridge_setup_v1';
@@ -162,6 +162,17 @@ ETB.codexInstaller = (function () {
     '            raise RuntimeError("command_exit_" + str(completed.returncode))',
     '        return completed.stdout or ""',
     '',
+    '    def run_raw(args, timeout=120):',
+    '        # Как run, но отдаёт весь результат вместе с stderr. Нужен там, где',
+    '        # отказ обязан назвать ПРИЧИНУ: run() поднимает RuntimeError и текст',
+    '        # ошибки теряется, а без него разбор идёт вслепую.',
+    '        try:',
+    '            return subprocess.run(args, stdout=subprocess.PIPE,',
+    '                stderr=subprocess.PIPE, text=True, timeout=timeout,',
+    '                env=safe_env(), shell=False)',
+    '        except Exception:',
+    '            return None',
+    '',
     '    def current_token():',
     '        token = os.environ.get("EXTELLA_API_TOKEN", "").strip()',
     '        if len(token) >= 8:',
@@ -293,13 +304,24 @@ ETB.codexInstaller = (function () {
     '            except Exception:',
     '                return result("error", "marketplace_remove_failed",',
     '                    "Codex не смог обновить прежний источник Extella.")',
-    '        try:',
-    '            run([codex, "plugin", "marketplace", "add",',
-    '                "AnvarBakiyev/extella-bridges", "--ref", BUILDER_REF,',
-    '                "--json"], timeout=180)',
-    '        except Exception:',
+    '        added = run_raw([codex, "plugin", "marketplace", "add",',
+    '            "AnvarBakiyev/extella-bridges", "--ref", BUILDER_REF,',
+    '            "--json"], timeout=180)',
+    '        if added is None or added.returncode != 0:',
+    '            # Репозиторий моста закрытый: без доступа клон падает у всех,',
+    '            # кроме владельца. Прежний отказ не называл ничего, и разбор',
+    '            # шёл вслепую (замер 21.08.2026, отказ у тестировщика).',
+    '            перед = ((added.stderr or "") + (added.stdout or "")).lower() if added else ""',
+    '            нет_доступа = any(с in перед for с in ("permission denied", "repository not found", "could not read username", "authentication failed", "403"))',
+    '            if нет_доступа:',
+    '                return result("error", "marketplace_no_access",',
+    '                    "GitHub не отдал репозиторий моста. Раздача публичная, "',
+    '                    "доступ для неё не нужен — скорее всего сохранился прежний "',
+    '                    "закрытый источник. Удалите источник extella-codex и "',
+    '                    "нажмите кнопку ещё раз.")',
     '            return result("error", "marketplace_add_failed",',
-    '                "Codex не смог добавить проверенный источник Extella.")',
+    '                "Codex не смог добавить проверенный источник Extella: " +',
+    '                (((added.stderr or "").strip()[-160:]) if added else "нет ответа"))',
     '        try:',
     '            run([codex, "plugin", "add", PLUGIN, "--json"], timeout=180)',
     '        except Exception:',
@@ -539,7 +561,14 @@ ETB.codexInstaller = (function () {
     '            return json.dumps({"status": "error", "code": "marketplace_remove_failed", "message": "Codex could not refresh the Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
     '    added = subprocess.run([codex, "plugin", "marketplace", "add", "AnvarBakiyev/extella-bridges", "--ref", "v0.3.6", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if added.returncode != 0:',
-    '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace.", "model_called": False, "agent_called": False, "paid": False})',
+    '        # The bridge repository is private. Without access the clone fails',
+    '        # for everyone but its owner, and the old text blamed nothing at',
+    '        # all — the tester saw a dead end (measured 21.08.2026).',
+    '        denied = ((added.stderr or "") + (added.stdout or "")).lower()',
+    '        no_access = any(mark in denied for mark in ("permission denied", "repository not found", "could not read username", "authentication failed", "403"))',
+    '        if no_access:',
+    '            return json.dumps({"status": "error", "code": "marketplace_no_access", "message": "GitHub did not serve the bridge repository. The distribution is public and needs no access, so a stale private marketplace source is the likely cause: remove the extella-codex marketplace and press again.", "model_called": False, "agent_called": False, "paid": False})',
+    '        return json.dumps({"status": "error", "code": "marketplace_add_failed", "message": "Codex could not add the verified Extella marketplace: " + ((added.stderr or "").strip()[-160:] or "no output"), "model_called": False, "agent_called": False, "paid": False})',
     '    installed = subprocess.run([codex, "plugin", "add", "extella-codex-bridge@extella-codex", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180, env=env, shell=False)',
     '    if installed.returncode != 0:',
     '        return json.dumps({"status": "error", "code": "plugin_install_failed", "message": "Codex could not install Extella Codex Bridge.", "model_called": False, "agent_called": False, "paid": False})',
