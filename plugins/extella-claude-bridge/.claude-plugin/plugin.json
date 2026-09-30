@@ -1,7 +1,7 @@
 {
   "name": "extella-claude-bridge",
-  "version": "0.4.4",
-  "description": "Extella integration for Claude Code: one MCP connection per Extella account, with no token stored in the plugin.",
+  "version": "0.5.0",
+  "description": "Extella integration for Claude Code: one MCP connection per Extella account, no token stored in the plugin, and a skill that proves the connection by a real tool call.",
   "author": {
     "name": "Anvar Bakiyev"
   },

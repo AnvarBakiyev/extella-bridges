@@ -17,6 +17,7 @@ const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const OWNER = "AnvarBakiyev";
 const REPO = "extella-bridges";
 const CLONE_URL = `https://github.com/${OWNER}/${REPO}.git`;
+const PLUGIN_PATH = `plugins/${PLUGIN_NAME}`;
 
 function parseArgs(argv) {
   const options = {};
@@ -51,7 +52,14 @@ function pinnedSource(tag) {
   // git@github.com and fail with "Permission denied (publickey)" — even when
   // the repository is public. The `url` form clones over HTTPS and still
   // honours the tag: the cache checked out v0.3.6 exactly.
-  return { source: "url", url: CLONE_URL, ref: tag };
+  //
+  // `git-subdir`, not bare `url`. Measured 30.09.2026: the `url` form installs the
+  // REPOSITORY ROOT as the plugin, and the root holds only the marketplace — so
+  // `claude plugin details` reported Skills 0, MCP servers 0, Hooks 0 for the
+  // installed 0.4.4. The plugin itself lives one level down. `git-subdir` clones
+  // over the same HTTPS URL (no SSH key needed) and takes the plugin from `path`
+  // — the form Anthropic's own marketplace uses.
+  return { source: "git-subdir", url: CLONE_URL, path: PLUGIN_PATH, ref: tag };
 }
 
 // A string entry is the local path; an object entry must carry a tag. Anything
@@ -64,11 +72,17 @@ function describeSource(entry) {
   }
   if (
     entry &&
-    entry.source === "url" &&
+    entry.source === "git-subdir" &&
     entry.url === CLONE_URL &&
+    entry.path === PLUGIN_PATH &&
     RELEASE_TAG.test(entry.ref || "")
   ) {
-    return { kind: "url", pinned: true, detail: entry.ref };
+    return { kind: "git-subdir", pinned: true, detail: entry.ref };
+  }
+  // The bare `url` form is refused now: it installs the repository root, which is
+  // not a plugin, and Claude Code loads nothing from it (measured 30.09.2026).
+  if (entry && entry.source === "url") {
+    return { kind: "invalid", pinned: false, detail: "url form installs the repo root, not the plugin" };
   }
   // The old `github` form is refused on purpose: it pins correctly but installs
   // only for people with an SSH key, which is most of an install failure.
