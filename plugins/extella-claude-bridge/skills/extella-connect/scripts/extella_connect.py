@@ -181,8 +181,20 @@ def _last_json(text: str):
     return last
 
 
+# The proof tool. Chosen by measurement (30.09.2026), not by habit:
+#   * list_profiles — rejects a wrong key (isError, "dependency 'token'") and answers a
+#     valid one in ~600 characters: a real proof that fits any client's output limit;
+#   * list_agents — also checks the key, but on a large account answers ~270 000
+#     characters: it overflows the client's tool-output limit and, read partially,
+#     cannot be parsed — which an absence-of-error check would call a success;
+#   * get_current_profile_and_agent — answers "successfully" to a WRONG key: it echoes
+#     the headers it was sent. Never a proof.
+PROOF_TOOL = "list_profiles"
+
+
 def prove_tool_call(headers: dict) -> tuple[bool, str]:
-    """A real tools/call — the only thing that proves the MCP channel."""
+    """A real tools/call — the only thing that proves the MCP channel. Proven means a
+    PARSED answer that says isError=false and carries content; anything else is not."""
     if not headers.get("X-Auth-Token"):
         return False, "no key in the headers"
     if not str(headers.get("X-Agent-Id", "")).strip():
@@ -192,14 +204,27 @@ def prove_tool_call(headers: dict) -> tuple[bool, str]:
             "protocolVersion": "2024-11-05", "capabilities": {},
             "clientInfo": {"name": "extella-connect", "version": "1"}}}, headers)
         text, _ = _mcp({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                        "params": {"name": "list_agents", "arguments": {}}}, headers, sess)
+                        "params": {"name": PROOF_TOOL, "arguments": {}}}, headers, sess)
     except Exception as e:                                       # noqa: BLE001
         return False, f"MCP did not answer ({type(e).__name__})"
-    answer = _last_json(text) or {}
-    result = answer.get("result") or {}
-    if "error" in answer or result.get("isError"):
+    return judge(_last_json(text))
+
+
+def judge(answer) -> tuple[bool, str]:
+    """Positive evidence only. An unparsed or empty answer is NOT a success."""
+    if not isinstance(answer, dict):
+        return False, "the tool answer could not be parsed — not proven"
+    if "error" in answer:
         return False, "MCP refused the tool call"
-    return True, "list_agents answered with account data"
+    result = answer.get("result")
+    if not isinstance(result, dict):
+        return False, "no result in the tool answer — not proven"
+    if result.get("isError") is not False:
+        return False, "MCP refused the tool call"
+    content = result.get("content") or []
+    if not content or not str(content[0].get("text", "")).strip():
+        return False, "the tool answered with nothing — not proven"
+    return True, f"{PROOF_TOOL} answered with account data"
 
 
 # ── doctor and register ────────────────────────────────────────────────────
@@ -323,6 +348,16 @@ def selftest() -> int:
     ok, why = prove_tool_call({"X-Auth-Token": "k-12345678", "X-Profile-Id": PROFILE})
     if ok or "X-Agent-Id" not in why:
         fails.append("missing X-Agent-Id is not named as the cause before any network call")
+    if judge(None)[0] or judge({})[0]:
+        fails.append("an unparsed or empty answer counts as proof — the false green of 30.09")
+    if judge({"result": {"content": [{"text": "x"}]}})[0]:
+        fails.append("an answer without isError=false counts as proof")
+    if judge({"result": {"isError": True, "content": [{"text": "dependency 'token'"}]}})[0]:
+        fails.append("a refused call counts as proof")
+    if not judge({"result": {"isError": False, "content": [{"text": '{"profiles": []}'}]}})[0]:
+        fails.append("a valid parsed answer is not accepted")
+    if PROOF_TOOL == "get_current_profile_and_agent":
+        fails.append("the proof tool echoes headers and accepts a wrong key")
     with tempfile.TemporaryDirectory() as tmp:
         old = os.environ.get("HOME")
         os.environ["HOME"] = tmp

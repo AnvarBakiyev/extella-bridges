@@ -19,8 +19,18 @@ answered with account data. Nothing short of that counts.
   *"Failed to resolve dependency 'token'"* — it blames a key that is fine. A wrong key
   gets the same text.
 - The truth: `POST /api/token/validate` says whether the key is valid **and which agent it
-  belongs to**; a real `tools/call` proves the MCP channel. An **empty agent list on a new
+  belongs to**; a real `tools/call` proves the MCP channel. An **empty list on a new
   account is a success**, not a failure.
+
+## Which tool proves it (measured — the choice matters)
+
+- **`list_profiles`, no arguments** — rejects a wrong key, answers a valid one in ~600
+  characters. Use this one.
+- `get_current_profile_and_agent` — answers "successfully" to a **wrong** key: it echoes
+  the headers it was sent. **Never a proof.**
+- `list_agents` — checks the key, but on a large account answers ~270 000 characters and
+  overflows your tool-output limit. And never pass `profile_id: "default"` to it: the
+  filter wants a real profile id, "default" answers 404 *Profile not found*.
 
 ## Steps
 
@@ -40,10 +50,10 @@ answered with account data. Nothing short of that counts.
 | key not recognised | same action, a new token — the old one is dead or from another account |
 | key valid, nothing proven | `python3 scripts/extella_connect.py register`, then the user restarts Claude Code |
 | two connections to one account | name both, recommend keeping the one stored as `helper` (key in a 0600 file) and removing the other with `claude mcp remove <name> -s user` — **only after the user agrees** |
-| proven | after a restart, call that server's `list_agents` tool yourself — that call is the proof |
+| proven | after a restart, call that server's `list_profiles` tool yourself, with no arguments — that call is the proof |
 
-4. **After a restart, call `list_agents`** of the proven server from this session. That
-   is the final proof; report it with the server name.
+4. **After a restart, call `list_profiles`** (no arguments) of the proven server from this
+   session. That is the final proof; report it with the server name.
 
 ## What `register` does — and does not
 
