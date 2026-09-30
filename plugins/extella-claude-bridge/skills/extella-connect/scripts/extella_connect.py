@@ -282,6 +282,17 @@ def doctor() -> dict:
     return report
 
 
+def connections_of(handle: str) -> list[str]:
+    """Names of every Extella server that sends THIS account's key, whatever its name."""
+    names = []
+    for srv in extella_servers():
+        headers, _ = server_headers(srv["entry"])
+        sent = str(headers.get("X-Auth-Token", ""))
+        if srv["name"] == server_name(handle) or (sent and account_handle(sent) == handle):
+            names.append(srv["name"])
+    return names
+
+
 def register() -> dict:
     if sys.platform.startswith("win"):
         return {"status": "error", "message": "Registering on native Windows is not supported yet: "
@@ -298,10 +309,14 @@ def register() -> dict:
         return {"status": "error", "message": "token/validate returned no usable agent id."}
     handle, h = account_handle(token), home()
     name = server_name(handle)
-    existing = [s for s in extella_servers() if s["name"] == name]
-    if existing:
-        return {"status": "exists", "server": name,
-                "message": "This account already has its connection; nothing was changed."}
+    # The account is recognised by the KEY a connection sends, not by its name. A
+    # name-only check let a legacy `extella` server (key in plain headers) and this
+    # registrar's `extella_acct_…` coexist for one account — measured 30.09.2026.
+    same_account = connections_of(handle)
+    if same_account:
+        return {"status": "exists", "server": same_account[0], "servers": same_account,
+                "message": ("This account already has a connection (" + ", ".join(same_account) +
+                            "); nothing was changed. A second one would duplicate it.")}
     if not shutil.which("claude"):
         return {"status": "error", "message": "The `claude` command is not on PATH."}
     (h / ".extella" / "mcp").mkdir(parents=True, exist_ok=True)
@@ -365,6 +380,16 @@ def selftest() -> int:
         try:
             if keys_on_disk():
                 fails.append("an empty home reported keys")
+            # A legacy server under another name, key in plain headers, same account.
+            legacy_key = "legacy-key-12345678"
+            (pathlib.Path(tmp) / ".claude.json").write_text(json.dumps({"mcpServers": {
+                "extella": {"type": "http", "url": MCP_URL,
+                            "headers": {"X-Auth-Token": legacy_key}}}}), encoding="utf-8")
+            if connections_of(account_handle(legacy_key)) != ["extella"]:
+                fails.append("a legacy connection under another name is not recognised "
+                             "as the same account — register would duplicate it")
+            if connections_of(account_handle("another-key-12345678")):
+                fails.append("another account's key is taken for this one")
             r = {"next_action": NO_KEY} if not keys_on_disk() else doctor()
             if "Tokens" not in r["next_action"] or "chat" not in r["next_action"]:
                 fails.append("no-key action does not lead to the Tokens screen")
