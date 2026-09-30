@@ -1,7 +1,27 @@
-# Extella ↔ Claude Code bridge (PoC)
+# Extella ↔ Claude Code bridge
 
-Proof of concept. Nothing here is installed, published, or wired to a live
-Extella account. The Codex bridge 0.3.5 is untouched.
+Published through the `extella-claude` marketplace. Since 0.5.0 the plugin
+actually loads into Claude Code: until then the marketplace pointed at the
+repository root, and `claude plugin details` reported zero skills, zero MCP
+servers and zero hooks for the installed 0.4.4 (measured 30.09.2026).
+
+## Skill: `extella-connect` (0.5.0)
+
+`skills/extella-connect/` teaches Claude Code how to connect to Extella and — more
+importantly — how to *prove* it. Its script `scripts/extella_connect.py` is a doctor
+and a registrar:
+
+* **doctor** lists the keys on the machine as account handles (never values),
+  validates each with `POST /api/token/validate`, finds every Extella MCP server
+  Claude Code knows, proves each with a real `tools/call`, flags two connections to
+  one account, and ends with one next action;
+* **register** creates this account's connection in exactly the format below —
+  handle, 0600 token file, 0700 helper with the agent id `token/validate` returned,
+  `claude mcp add-json --scope user`. It never removes anything.
+
+The Python registrar and `scripts/extella-mcp-accounts.mjs` describe one format;
+`plugins/extella-codex-bridge/test/claude-connect-parity.test.mjs` runs both and
+demands byte-equal results.
 
 ## Layout
 
@@ -32,15 +52,16 @@ node scripts/set-marketplace-source.mjs --local      # back to the local path
 
 ```json
 {
-  "source": "github",
-  "owner": "AnvarBakiyev",
-  "repo": "extella-codex-bridge",
-  "ref": "v0.4.0"
+  "source": "git-subdir",
+  "url": "https://github.com/AnvarBakiyev/extella-bridges.git",
+  "path": "plugins/extella-claude-bridge",
+  "ref": "v0.5.0"
 }
 ```
 
-`ref` accepts a tag, a branch, or a commit SHA. Only a tag is acceptable here:
-a branch is a floating source.
+`git-subdir`, not bare `url`: the `url` form installs the repository root, which is
+not a plugin. `ref` accepts a tag, a branch, or a commit SHA. Only a tag is
+acceptable here: a branch is a floating source.
 
 ## Direction A — one Extella account, one MCP connection
 
