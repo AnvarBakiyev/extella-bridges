@@ -15,10 +15,10 @@
         "source": "git-subdir",
         "url": "https://github.com/AnvarBakiyev/extella-bridges.git",
         "path": "plugins/extella-claude-bridge",
-        "ref": "v0.5.2"
+        "ref": "v0.5.3"
       },
       "description": "Connect Claude Code to Extella MCP, one connection per Extella account, with a skill that proves the connection by a real tool call.",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "keywords": [
         "extella",
         "mcp",

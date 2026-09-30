@@ -277,8 +277,8 @@ def doctor() -> dict:
                                  "Run `python3 extella_connect.py register`, then restart Claude Code.")
     else:
         report["next_action"] = (f"Connected and proven: {proven[0]['name']}. After a restart, call its "
-                                 "list_agents tool from this session — an empty list on a new "
-                                 "account is a success.")
+                                 f"{PROOF_TOOL} tool (no arguments) from this session — that "
+                                 "call is the final proof.")
     return report
 
 
@@ -335,7 +335,7 @@ def register() -> dict:
                                                           text=True).stdout))
     return {"status": "registered" if ok else "registered_unproven", "server": name,
             "account": handle, "agent_id": agent, "proof": proof, "key_from": where,
-            "message": "Restart Claude Code, then call list_agents of " + name + "."}
+            "message": f"Restart Claude Code, then call {PROOF_TOOL} of {name} (no arguments)."}
 
 
 # ── self-test (offline) ────────────────────────────────────────────────────
@@ -371,6 +371,10 @@ def selftest() -> int:
         fails.append("a refused call counts as proof")
     if not judge({"result": {"isError": False, "content": [{"text": '{"profiles": []}'}]}})[0]:
         fails.append("a valid parsed answer is not accepted")
+    # The advice the user acts on must name the proof tool, not the one that overflows.
+    src = pathlib.Path(__file__).read_text(encoding="utf-8")
+    if any(n in src for n in ("call " + "list_agents", "list_" + "agents tool")):
+        fails.append("the next action sends the user to list_agents, which overflows on a large account")
     if PROOF_TOOL == "get_current_profile_and_agent":
         fails.append("the proof tool echoes headers and accepts a wrong key")
     with tempfile.TemporaryDirectory() as tmp:
