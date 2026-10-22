@@ -81,6 +81,7 @@ Each account gets a derived, non-reversible handle and its own entry:
 | MCP server name | `extella_acct_9f2c1ab47e05` |
 | token file, mode 0600 | `~/.extella/mcp/acct_9f2c1ab47e05.token` |
 | headers helper, mode 0700 | `~/.extella/mcp/acct_9f2c1ab47e05.sh` |
+| headers helper on native Windows | `~/.extella/mcp/acct_9f2c1ab47e05.cmd`, named by its 8.3 short path with forward slashes |
 
 ```json
 {

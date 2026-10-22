@@ -64,8 +64,15 @@ user-scope server `extella_<handle>` added through `claude mcp add-json`. The ke
 enters the config, the command line or the process list. If the account already has its
 connection, `register` changes nothing.
 
-It does **not** remove other connections, does not create tokens, and does not run on
-native Windows yet (the helper is a shell script — use WSL, macOS or Linux).
+It does **not** remove other connections and does not create tokens.
+
+On **native Windows** (since 0.5.4) the helper is `~/.extella/mcp/<handle>.cmd`, and the
+server entry names it as an unquoted forward-slash path in its 8.3 short form, for example
+`C:/Users/IVANPE~1/EXTELL~1/mcp/ACCT_9~1.CMD`. Claude Code runs a helper in Git Bash, or in
+PowerShell when Git for Windows is absent; one string has to work in both. Measured on
+Windows 11 on 22.10.2026: cmd and PowerShell return the headers, including from a profile
+folder with a space in its name. Git Bash was not installed on the test machine. The token
+file is protected by the profile's own permissions; `chmod` does nothing on Windows.
 
 ## Do not
 
