@@ -30,6 +30,7 @@ import os
 import pathlib
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import urllib.error
@@ -47,6 +48,40 @@ NO_KEY = ("No Extella key on this computer. One human action: in the Extella app
 
 def home() -> pathlib.Path:
     return pathlib.Path(os.environ.get("HOME") or pathlib.Path.home())
+
+
+# Python from python.org on a Mac ships without root certificates until its
+# «Install Certificates.command» is run: every https call then fails with
+# CERTIFICATE_VERIFY_FAILED (live case 27.10.2026). Verification is never turned
+# off; when Python has no bundle of its own, the macOS system bundle is used.
+SYSTEM_BUNDLES = ("/etc/ssl/cert.pem", "/private/etc/ssl/cert.pem")
+
+
+def tls_context(factory=None, bundles=SYSTEM_BUNDLES):
+    ctx = (factory or ssl.create_default_context)()
+    try:
+        if ctx.cert_store_stats().get("x509_ca", 0) > 0:
+            return ctx
+    except Exception:                                            # noqa: BLE001
+        return ctx
+    for path in bundles:
+        if os.path.isfile(path):
+            try:
+                ctx.load_verify_locations(cafile=path)
+            except Exception:                                    # noqa: BLE001
+                continue
+            if ctx.cert_store_stats().get("x509_ca", 0) > 0:
+                break
+    return ctx
+
+
+def network_reason(error) -> str:
+    text = str(error)
+    if "CERTIFICATE_VERIFY_FAILED" in text:
+        return ("Python here cannot verify Extella's certificate (CERTIFICATE_VERIFY_FAILED): "
+                "it has no root certificates. With python.org Python on a Mac, run "
+                "«Install Certificates.command» from Applications/Python 3.x once.")
+    return f"no answer ({type(error).__name__})"
 
 
 # ── the bridge's format ────────────────────────────────────────────────────
@@ -219,12 +254,12 @@ def validate(token: str) -> dict:
     req = urllib.request.Request(VALIDATE_URL, data=body, method="POST", headers={
         "Content-Type": "application/json", "X-Auth-Token": token, "X-Profile-Id": PROFILE})
     try:
-        with urllib.request.urlopen(req, timeout=40) as r:
+        with urllib.request.urlopen(req, timeout=40, context=tls_context()) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         return {"valid": False, "why": f"HTTP {e.code}"}
     except Exception as e:                                       # noqa: BLE001
-        return {"valid": None, "why": f"no answer ({type(e).__name__})"}
+        return {"valid": None, "why": network_reason(e)}
     return {"valid": bool(data.get("valid")), "agent_id": data.get("agent_id"),
             "why": "" if data.get("valid") else "token/validate: valid=false"}
 
@@ -235,7 +270,7 @@ def _mcp(body: dict, headers: dict, session: str = ""):
     if session:
         h["Mcp-Session-Id"] = session
     req = urllib.request.Request(MCP_URL, data=json.dumps(body).encode(), method="POST", headers=h)
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=60, context=tls_context()) as r:
         return r.read(600_000).decode("utf-8", "replace"), r.headers.get("Mcp-Session-Id") or ""
 
 
@@ -277,7 +312,7 @@ def prove_tool_call(headers: dict) -> tuple[bool, str]:
         text, _ = _mcp({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                         "params": {"name": PROOF_TOOL, "arguments": {}}}, headers, sess)
     except Exception as e:                                       # noqa: BLE001
-        return False, f"MCP did not answer ({type(e).__name__})"
+        return False, "MCP did not answer: " + network_reason(e)
     return judge(_last_json(text))
 
 
@@ -459,6 +494,20 @@ def selftest() -> int:
         fails.append("a refused call counts as proof")
     if not judge({"result": {"isError": False, "content": [{"text": '{"profiles": []}'}]}})[0]:
         fails.append("a valid parsed answer is not accepted")
+    # No root certificates (python.org Python on a Mac): the system bundle is loaded,
+    # verification stays on.
+    class _Empty:
+        def __init__(self): self.loaded = []
+        def cert_store_stats(self): return {"x509_ca": 1 if self.loaded else 0}
+        def load_verify_locations(self, cafile=None): self.loaded.append(cafile)
+    with tempfile.NamedTemporaryFile(suffix=".pem") as bundle:
+        if tls_context(factory=_Empty, bundles=(bundle.name,)).loaded != [bundle.name]:
+            fails.append("without its own CA bundle Python does not fall back to the system one")
+    real = tls_context()
+    if real.verify_mode != ssl.CERT_REQUIRED or not real.check_hostname:
+        fails.append("certificate verification is not required")
+    if "Install Certificates" not in network_reason(Exception("[SSL: CERTIFICATE_VERIFY_FAILED]")):
+        fails.append("a certificate failure is not explained with the step to fix it")
     # The advice the user acts on must name the proof tool, not the one that overflows.
     src = pathlib.Path(__file__).read_text(encoding="utf-8")
     if any(n in src for n in ("call " + "list_agents", "list_" + "agents tool")):
