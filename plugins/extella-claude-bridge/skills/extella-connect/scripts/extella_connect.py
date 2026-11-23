@@ -581,7 +581,7 @@ def _selftest_agents() -> list:
             return True, f"{PROOF_TOOL} answered with account data"
         g["validate"] = lambda token: {"valid": True, "agent_id": main, "why": ""}
         g["prove_tool_call"] = fake_prove
-        g["claude_command"] = lambda: [str(fake)]
+        g["claude_command"] = lambda: [sys.executable, str(fake)]   # no shebang needed on Windows
         # The REST list of the account: None (unreadable) falls back to the proof call.
         g["account_agents"] = lambda token, main_agent: {main, second, third}
         try:
