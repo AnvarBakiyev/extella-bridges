@@ -12,7 +12,8 @@
 import { createHash } from "node:crypto";
 
 const ACCOUNT_HANDLE = /^acct_[a-f0-9]{12}$/;
-const SERVER_NAME = /^extella_acct_[a-f0-9]{12}$/;
+const SERVER_NAME = /^extella_acct_[a-f0-9]{12}(_[a-f0-9]{8})?$/;
+const AGENT_ID = /^agent_[A-Za-z0-9_-]{8,128}$/;
 const ENVIRONMENT_NAME = /^EXTELLA_MCP_TOKEN_ACCT_[A-F0-9]{12}$/;
 
 const EXTELLA_MCP_URL = "https://api.extella.ai/mcp/";
@@ -30,11 +31,30 @@ function accountHandle(token) {
   return `acct_${digest.slice(0, 12)}`;
 }
 
-function serverName(handle) {
+// Several agents of one account. The token's own agent keeps the old name
+// `extella_acct_<12>`; every other chosen agent gets its own binding
+// `extella_acct_<12>_<8>`, where the 8 hex are sha256(agent_id). All bindings of
+// an account read the same 0600 token file; only X-Agent-Id differs.
+function agentSuffix(agentId) {
+  if (!AGENT_ID.test(agentId || "")) {
+    throw new Error("A valid Extella agent id is required");
+  }
+  return createHash("sha256").update(agentId, "utf8").digest("hex").slice(0, 8);
+}
+
+function bindingName(handle, agentId = "") {
   if (!ACCOUNT_HANDLE.test(handle || "")) {
     throw new Error("A valid Extella account handle is required");
   }
-  return `extella_${handle}`;
+  return agentId ? `${handle}_${agentSuffix(agentId)}` : handle;
+}
+
+function serverName(handle, agentId = "") {
+  return `extella_${bindingName(handle, agentId)}`;
+}
+
+function helperFilePath(handle, home, agentId = "") {
+  return `${home}/.extella/mcp/${bindingName(handle, agentId)}.sh`;
 }
 
 function environmentName(handle) {
@@ -81,7 +101,7 @@ function tokenFilePath(handle, home) {
 // The helper reads the token at request time and never receives it as an
 // argument, so it appears in no process listing.
 function headersHelperScript(handle, { agentId, home }) {
-  if (!/^agent_[A-Za-z0-9_-]{8,128}$/.test(agentId || "")) {
+  if (!AGENT_ID.test(agentId || "")) {
     throw new Error("A resolved Extella agent id is required");
   }
   return [
@@ -94,7 +114,9 @@ function headersHelperScript(handle, { agentId, home }) {
 }
 
 function mcpConfigFragment(handle, options) {
-  return { mcpServers: { [serverName(handle)]: mcpServerEntry(handle, options) } };
+  return {
+    mcpServers: { [serverName(handle, options?.chosenAgentId)]: mcpServerEntry(handle, options) },
+  };
 }
 
 // `claude mcp list` and `claude mcp get` report "✓ Connected" for a server
@@ -110,13 +132,15 @@ const TOKEN_VALIDATE_URL = "https://api.extella.ai/api/token/validate";
 function isProvenAccountBinding(validateResponse) {
   return (
     validateResponse?.valid === true &&
-    /^agent_[A-Za-z0-9_-]{8,128}$/.test(validateResponse?.agent_id || "")
+    AGENT_ID.test(validateResponse?.agent_id || "")
   );
 }
 
 // Adding a second account must not disturb the first. Merge is by server name,
-// which is derived from the account, so two accounts can never contend for one
-// entry and a repeated setup for the same account is idempotent.
+// which is derived from the account (and, for a chosen agent, from the agent),
+// so two accounts or two agents can never contend for one entry and a repeated
+// setup for the same agent is idempotent. Pass `options.chosenAgentId` only for an
+// agent other than the token's own.
 function mergeAccountConfig(existing, handle, options) {
   const base =
     existing && typeof existing === "object" && !Array.isArray(existing)
@@ -128,7 +152,7 @@ function mergeAccountConfig(existing, handle, options) {
     ...base,
     mcpServers: {
       ...servers,
-      [serverName(handle)]: mcpServerEntry(handle, options),
+      [serverName(handle, options?.chosenAgentId)]: mcpServerEntry(handle, options),
     },
   };
 }
@@ -143,15 +167,19 @@ function containsTokenMaterial(serialized, token) {
 
 export {
   ACCOUNT_HANDLE,
+  AGENT_ID,
   ENVIRONMENT_NAME,
   EXTELLA_MCP_URL,
   EXTELLA_PROFILE_ID,
   SERVER_NAME,
   TOKEN_VALIDATE_URL,
   accountHandle,
+  agentSuffix,
+  bindingName,
   containsTokenMaterial,
   environmentName,
   headersHelperScript,
+  helperFilePath,
   isProvenAccountBinding,
   mcpConfigFragment,
   mcpServerEntry,

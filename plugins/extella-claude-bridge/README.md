@@ -18,6 +18,9 @@ and a registrar:
 * **register** creates this account's connection in exactly the format below —
   handle, 0600 token file, 0700 helper with the agent id `token/validate` returned,
   `claude mcp add-json --scope user`. It never removes anything.
+* **register --agent agent_…** (0.6.0) connects one more agent of the same account as
+  its own server `extella_acct_<12>_<8>` (8 hex of `sha256(agent_id)`), proven with that
+  agent before anything is written; the main connection is not touched.
 
 The Python registrar and `scripts/extella-mcp-accounts.mjs` describe one format;
 `plugins/extella-codex-bridge/test/claude-connect-parity.test.mjs` runs both and

@@ -64,6 +64,19 @@ user-scope server `extella_<handle>` added through `claude mcp add-json`. The ke
 enters the config, the command line or the process list. If the account already has its
 connection, `register` changes nothing.
 
+### Several agents of one account (since 0.6.0)
+
+`register --agent agent_…` connects one more agent of the same account. The token's own
+agent stays the main connection `extella_<handle>`; any other agent gets its own server
+`extella_<handle>_<8 hex>` (the 8 hex are `sha256(agent_id)`), its own helper
+`~/.extella/mcp/<handle>_<8 hex>.sh` with that `X-Agent-Id`, and reads the same 0600 key
+file. Before anything is written the chosen agent is checked against the account's REST
+agent list (when it can be read) and proven by `tools/call list_profiles`
+with its own `X-Agent-Id`; a foreign or missing agent is refused in words and nothing is
+written. Registering the same agent again answers `exists`. Other agents' connections are
+not touched. Without `--agent` everything is as before. `--json` lists every account's
+`bindings` with their `agent_id`.
+
 It does **not** remove other connections and does not create tokens.
 
 On **native Windows** (since 0.5.4) the helper is `~/.extella/mcp/<handle>.cmd`, and the
