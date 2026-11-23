@@ -70,7 +70,8 @@ connection, `register` changes nothing.
 agent stays the main connection `extella_<handle>`; any other agent gets its own server
 `extella_<handle>_<8 hex>` (the 8 hex are `sha256(agent_id)`), its own helper
 `~/.extella/mcp/<handle>_<8 hex>.sh` with that `X-Agent-Id`, and reads the same 0600 key
-file. Before anything is written the chosen agent is proven by `tools/call list_profiles`
+file. Before anything is written the chosen agent is checked against the account's REST
+agent list (when it can be read) and proven by `tools/call list_profiles`
 with its own `X-Agent-Id`; a foreign or missing agent is refused in words and nothing is
 written. Registering the same agent again answers `exists`. Other agents' connections are
 not touched. Without `--agent` everything is as before. `--json` lists every account's

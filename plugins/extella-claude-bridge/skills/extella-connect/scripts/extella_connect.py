@@ -38,6 +38,7 @@ import urllib.error
 import urllib.request
 
 MCP_URL = "https://api.extella.ai/mcp/"
+AGENT_LIST_URL = "https://api.extella.ai/api/agent/list"
 VALIDATE_URL = "https://api.extella.ai/api/token/validate"
 PROFILE = "default"
 HANDLE_RE = re.compile(r"^acct_[a-f0-9]{12}$")
@@ -93,7 +94,7 @@ def account_handle(token: str) -> str:
 
 def agent_suffix(agent_id: str) -> str:
     """8 hex of sha256(agent_id): names one agent's binding inside an account."""
-    if not AGENT_RE.match(agent_id or ""):
+    if not AGENT_RE.fullmatch(agent_id or ""):
         raise ValueError("A valid Extella agent id is required")
     return hashlib.sha256(agent_id.encode("utf-8")).hexdigest()[:8]
 
@@ -118,7 +119,7 @@ def helper_file(handle: str, h: pathlib.Path, agent_id: str = "") -> pathlib.Pat
 
 def helper_script(handle: str, agent_id: str, h: pathlib.Path) -> str:
     """Byte-for-byte what headersHelperScript() in the Node library produces."""
-    if not AGENT_RE.match(agent_id or ""):
+    if not AGENT_RE.fullmatch(agent_id or ""):
         raise ValueError("A resolved Extella agent id is required")
     return "\n".join([
         "#!/bin/sh",
@@ -158,7 +159,7 @@ def helper_script_windows(handle: str, agent_id: str) -> str:
     The key is not inside. The token file is named relative to the helper itself
     (%~dp0), so a Cyrillic profile name never has to be encoded into the .cmd."""
     assert HANDLE_RE.match(handle), "invalid handle"
-    if not AGENT_RE.match(agent_id or ""):
+    if not AGENT_RE.fullmatch(agent_id or ""):
         raise ValueError("A resolved Extella agent id is required")
     return "\r\n".join([
         "@echo off",
@@ -433,13 +434,33 @@ def connections_of(handle: str, agent_id: str = "", main_agent: str = "") -> lis
     return names
 
 
+def account_agents(token: str, main_agent: str):
+    """Agent ids of the key's account by REST, or None when the list cannot be read.
+
+    Why besides the proof call: MCP accepted a NONEXISTENT X-Agent-Id on list_agents
+    (measured 28.09.2026), so a proof call alone may not catch a foreign agent. The
+    list answers only for this key's account; read-only, ids only, nothing printed."""
+    req = urllib.request.Request(AGENT_LIST_URL, data=b"{}", method="POST", headers={
+        "Content-Type": "application/json", "X-Auth-Token": token,
+        "X-Profile-Id": PROFILE, "X-Agent-Id": main_agent})
+    try:
+        with urllib.request.urlopen(req, timeout=60, context=tls_context()) as r:
+            data = json.loads(r.read(20_000_000).decode("utf-8", "replace"))
+    except Exception:                                            # noqa: BLE001
+        return None
+    rows = data.get("agents") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return None
+    return {str(a.get("id")) for a in rows if isinstance(a, dict) and a.get("id")}
+
+
 def headers_for(token: str, agent_id: str) -> dict:
     return {"X-Auth-Token": token, "X-Profile-Id": PROFILE, "X-Agent-Id": agent_id}
 
 
 def register(chosen: str = "") -> dict:
     """Connect the account's main agent, or with `chosen` one more agent of it."""
-    if chosen and not AGENT_RE.match(chosen):
+    if chosen and not AGENT_RE.fullmatch(chosen):
         return {"status": "error", "message": "The agent id has a wrong shape: expected "
                 "agent_ followed by 8–128 letters, digits, «_» or «-». Nothing was changed."}
     keys = keys_on_disk()
@@ -450,7 +471,7 @@ def register(chosen: str = "") -> dict:
     if not v.get("valid"):
         return {"status": "error", "message": f"Key from {where} is not valid ({v.get('why')})."}
     agent = str(v.get("agent_id") or "")
-    if not AGENT_RE.match(agent):
+    if not AGENT_RE.fullmatch(agent):
         return {"status": "error", "message": "token/validate returned no usable agent id."}
     handle, h = account_handle(token), home()
     # The token's own agent is the main connection, under its old name.
@@ -469,6 +490,12 @@ def register(chosen: str = "") -> dict:
     if extra:
         # A chosen agent is proven BEFORE anything is written: a foreign or missing
         # agent leaves no file and no server behind.
+        known = account_agents(token, agent)
+        if known is not None and extra not in known:
+            return {"status": "error", "agent_id": extra,
+                    "message": (f"Agent {extra} is not in this key's account: either it belongs to "
+                                "another account or it does not exist. Pick an agent from your own "
+                                "list. Nothing was changed.")}
         ok, proof = prove_tool_call(headers_for(token, extra))
         if not ok:
             return {"status": "error", "agent_id": extra,
@@ -532,7 +559,7 @@ def _selftest_agents() -> list:
         fails.append("the main connection changed its name")
     if server_name(handle, second) != f"extella_{handle}_{agent_suffix(second)}":
         fails.append("a chosen agent's server is not extella_<handle>_<suffix>")
-    saved = {n: g[n] for n in ("validate", "prove_tool_call", "claude_command")}
+    saved = {n: g[n] for n in ("validate", "prove_tool_call", "claude_command", "account_agents")}
     old_home, saved_env = os.environ.get("HOME"), os.environ.pop("EXTELLA_API_TOKEN", None)
     proofs = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -555,6 +582,8 @@ def _selftest_agents() -> list:
         g["validate"] = lambda token: {"valid": True, "agent_id": main, "why": ""}
         g["prove_tool_call"] = fake_prove
         g["claude_command"] = lambda: [str(fake)]
+        # The REST list of the account: None (unreadable) falls back to the proof call.
+        g["account_agents"] = lambda token, main_agent: {main, second, third}
         try:
             (pathlib.Path(tmp) / ".extella").mkdir()
             (pathlib.Path(tmp) / ".extella" / "api_token.txt").write_text(key)
@@ -592,7 +621,18 @@ def _selftest_agents() -> list:
             if len(json.loads(cfg.read_text())["mcpServers"]) != 3 or \
                     sorted(p.name for p in (pathlib.Path(tmp) / ".extella" / "mcp").iterdir()) != snapshot:
                 fails.append("a refused agent left a file or a server behind")
-            if register("agent_x").get("status") != "error" or register("../../etc").get("status") != "error":
+            g["account_agents"] = lambda token, main_agent: None
+            if register(stranger).get("status") != "error":
+                fails.append("without the account list a foreign agent is not refused by the proof call")
+            g["account_agents"] = lambda token, main_agent: {main, second, third, stranger + "x"}
+            proofs.clear()
+            r_list = register("agent_NotInAccount1")
+            if r_list.get("status") != "error" or proofs:
+                fails.append("an agent missing from the account list is not refused before the proof call")
+            if len(json.loads(cfg.read_text())["mcpServers"]) != 3:
+                fails.append("a refused agent added a server")
+            if register("agent_x").get("status") != "error" or register("../../etc").get("status") != "error" \
+                    or register("agent_12345678\n").get("status") != "error":
                 fails.append("a malformed agent id is accepted")
             for f in (pathlib.Path(tmp) / ".extella" / "mcp").glob("*.sh"):
                 if key in f.read_text():
